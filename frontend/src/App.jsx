@@ -337,7 +337,7 @@ import {
   User, Building2, Calendar, Euro, History, FileText, BadgeAlert, Database, Split, AlertTriangle
 } from 'lucide-react';
 
-const API_URL = "http://localhost:5000"; 
+const API_URL = "https://lefauxcoin.onrender.com"; 
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
