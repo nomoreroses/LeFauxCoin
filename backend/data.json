@@ -1,0 +1,87 @@
+{
+  "mechanic": [
+    {
+      "id": "laguna2",
+      "keywords": ["laguna"],
+      "badYears": [2001, 2002, 2003],
+      "msg": "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes."
+    },
+    {
+      "id": "scenic2",
+      "keywords": ["scenic", "scénic", "megane", "mégane"],
+      "badYears": [2003, 2004, 2005],
+      "msg": "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006."
+    },
+    {
+      "id": "espace4",
+      "keywords": ["espace"],
+      "badYears": [2002, 2003, 2004, 2005, 2006],
+      "engines": ["2.2", "3.0", "dci"],
+      "msg": "⛔️ DANGER MOTEUR (ESPACE 4) : Les 2.2 et 3.0 dCi sont très fragiles (bielle)."
+    },
+    {
+      "id": "307",
+      "keywords": ["307"],
+      "badYears": [2001, 2002, 2003, 2004, 2005],
+      "msg": "⚠️ PEUGEOT 307 (PHASE 1) : Soucis électroniques (COM2000) et volant moteur."
+    },
+    {
+      "id": "prince",
+      "keywords": ["207", "308", "mini", "cooper", "ds3"],
+      "badYears": [2007, 2008, 2009, 2010, 2011],
+      "engines": ["vti", "thp", "150", "156", "175"],
+      "msg": "⛔️ MOTEUR 'PRINCE' (THP/VTi) : Consommation d'huile & chaîne de distribution."
+    },
+    {
+      "id": "tdi140",
+      "keywords": ["golf", "a3", "touran", "leon"],
+      "badYears": [2003, 2004, 2005],
+      "engines": ["140", "tdi", "2.0"],
+      "msg": "⛔️ CULASSE POREUSE (TDI 140) : Consommation de liquide de refroidissement."
+    },
+    {
+      "id": "clio4",
+      "keywords": ["clio"],
+      "badYears": [2012, 2013],
+      "msg": "⚠️ DÉFAUTS DE JEUNESSE (CLIO 4) : Bruits d'air, bugs R-Link, finitions bâclées."
+    },
+    {
+      "id": "c3",
+      "keywords": ["c3"],
+      "badYears": [2002, 2003],
+      "msg": "⚠️ FRAGILITÉ (C3) : Ressorts d'amortisseurs cassants."
+    }
+  ],
+  "scripts": [
+    {
+      "pattern": "très propre intérieur et extérieur aucun frais à prévoir aucun bosses ou rayures",
+      "label": "SCRIPT CONNU (Arnaque)",
+      "desc": "Ce texte exact (avec la faute 'aucun bosses') est utilisé massivement dans les fausses annonces."
+    },
+    {
+      "pattern": "véhicule roule tous les jours parcours toute distance",
+      "label": "PHRASE GÉNÉRIQUE",
+      "desc": "Formule type souvent utilisée pour masquer un manque d'entretien réel."
+    },
+    {
+      "pattern": "curieux s'abstenir",
+      "label": "VENDEUR AGRESSIF",
+      "desc": "Technique pour décourager les questions gênantes sur l'historique."
+    },
+    {
+      "pattern": "pas de mail ni de sms",
+      "label": "CONTACT SUSPECT",
+      "desc": "Refus de laisser des traces écrites. Souvent des marchands non déclarés."
+    },
+    {
+      "pattern": "prix ferme et définitif",
+      "label": "PRIX SUSPECT",
+      "desc": "Souvent utilisé pour vendre vite une voiture à problème sans discussion."
+    },
+    {
+      "pattern": "donne contre bon soin",
+      "label": "ARNAQUE AU DON",
+      "desc": "Arnaque classique : on vous demandera de payer les 'frais de transport'."
+    }
+  ]
+}

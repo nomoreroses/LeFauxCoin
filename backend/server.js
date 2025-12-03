@@ -1,0 +1,382 @@
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const https = require('https');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+const app = express();
+const PORT = 5000;
+
+// --- SÉCURITÉ 1 : HEADERS HTTP ---
+app.use(helmet());
+
+// --- SÉCURITÉ 2 : CORS RESTREINT ---
+// En local on autorise tout, en prod on cible ton site
+const allowedOrigins = ['http://localhost:5173', 'http://localhost:3000'];
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1 && process.env.NODE_ENV === 'production') {
+            var msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    }
+}));
+
+// --- SÉCURITÉ 3 : RATE LIMITING (Anti-Brute Force) ---
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limite à 100 requêtes par IP
+    message: { error: 'Trop de requêtes, veuillez réessayer plus tard.' }
+});
+app.use('/api/', limiter);
+
+app.use(bodyParser.json());
+
+// ==========================================
+// 1. BASES DE DONNÉES (INTELLIGENCE)
+// ==========================================
+const CAR_KNOWLEDGE_DB = [
+    { id: "laguna2", keywords: ["laguna"], badYears: [2001, 2002, 2003], msg: "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes." },
+    { id: "scenic2", keywords: ["scenic", "scénic", "megane", "mégane"], badYears: [2003, 2004, 2005], msg: "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006." },
+    { id: "espace4", keywords: ["espace"], badYears: [2002, 2003, 2004, 2005, 2006], engines: ["2.2", "3.0", "dci"], msg: "⛔️ DANGER MOTEUR (ESPACE 4) : Les 2.2 et 3.0 dCi sont très fragiles (bielle)." },
+    { id: "307", keywords: ["307"], badYears: [2001, 2002, 2003, 2004, 2005], msg: "⚠️ PEUGEOT 307 (PHASE 1) : Soucis électroniques (COM2000) et volant moteur." },
+    { id: "prince", keywords: ["207", "308", "mini", "cooper", "ds3"], badYears: [2007, 2008, 2009, 2010, 2011], engines: ["vti", "thp", "150", "156", "175"], msg: "⛔️ MOTEUR 'PRINCE' (THP/VTi) : Consommation d'huile & chaîne de distribution." },
+    { id: "tdi140", keywords: ["golf", "a3", "touran", "leon"], badYears: [2003, 2004, 2005], engines: ["140", "tdi", "2.0"], msg: "⛔️ CULASSE POREUSE (TDI 140) : Consommation de liquide de refroidissement." },
+    { id: "clio4", keywords: ["clio"], badYears: [2012, 2013], msg: "⚠️ DÉFAUTS DE JEUNESSE (CLIO 4) : Bruits d'air, R-Link buggé." },
+    { id: "c3", keywords: ["c3"], badYears: [2002, 2003], msg: "⚠️ FRAGILITÉ (C3) : Ressorts d'amortisseurs cassants." }
+];
+
+const SCAM_SCRIPTS_DB = [
+    { pattern: /très propre intérieur et extérieur aucun frais à prévoir aucun bosses ou rayures/i, label: "SCRIPT CONNU (Arnaque)", desc: "Texte utilisé massivement avec la faute 'aucun bosses'." },
+    { pattern: /véhicule roule tous les jours parcours toute distance/i, label: "PHRASE GÉNÉRIQUE", desc: "Formule type pour rassurer." },
+    { pattern: /curieux s'abstenir/i, label: "VENDEUR AGRESSIF", desc: "Décourage les questions." },
+    { pattern: /pas de mail ni de sms/i, label: "CONTACT SUSPECT", desc: "Refus de traces écrites." },
+    { pattern: /prix ferme et définitif/i, label: "PRIX SUSPECT", desc: "Vente forcée." },
+    { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
+];
+
+// ==========================================
+// 2. OUTILS TECHNIQUES & SÉCURITÉ
+// ==========================================
+
+// --- SÉCURITÉ 4 : TIMEOUT ---
+const nodeRequest = (url, timeout = 5000) => {
+    return new Promise((resolve, reject) => {
+        const req = https.get(url, (res) => {
+            let data = '';
+            res.on('data', c => data += c);
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    try { resolve(JSON.parse(data)); }
+                    catch (e) { reject(new Error("Invalid JSON")); }
+                } else { reject(new Error(`API Error ${res.statusCode}`)); }
+            });
+        });
+        
+        // Timeout de sécurité
+        req.setTimeout(timeout, () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        req.on('error', e => reject(e));
+        req.end();
+    });
+};
+
+// Nettoyage Leetspeak ("Peuge0t")
+const normalizeString = (str) => {
+    return str.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/@/g, 'a').replace(/[^a-z0-9 ]/g, '');
+};
+
+const hasNegativeContext = (text, keyword, windowSize = 30) => {
+    const lowerText = text.toLowerCase();
+    const index = lowerText.indexOf(keyword.toLowerCase());
+    if (index === -1) return false;
+    const start = Math.max(0, index - windowSize);
+    const contextBefore = lowerText.substring(start, index);
+    const negations = ["pas de ", "aucun ", "sans ", "0 ", "ni ", "jamais ", "non "];
+    return negations.some(neg => contextBefore.includes(neg));
+};
+
+const extractMainDescription = (fullText) => {
+    if (!fullText) return "";
+    let start = fullText.indexOf("Description");
+    if (start === -1) start = 0;
+    const noiseMarkers = ["Ces annonces peuvent vous intéresser", "Voir plus d’annonces", "Signaler l’annonce", "Financement", "Cetelem", "Vos droits et obligations"];
+    let end = fullText.length;
+    for (const marker of noiseMarkers) {
+        const idx = fullText.indexOf(marker, start);
+        if (idx !== -1 && idx < end) end = idx;
+    }
+    return fullText.substring(start, end);
+};
+
+const extractPreciseModel = (text) => {
+    if (!text) return null;
+    const structureMatch = text.match(/Modèle[\s\n]+([a-zA-Z0-9éè]+)/i);
+    if (structureMatch && structureMatch[1]) return structureMatch[1].toLowerCase();
+    
+    const title = text.substring(0, 100).toLowerCase();
+    const allKeywords = [...new Set(CAR_KNOWLEDGE_DB.flatMap(k => k.keywords)), "twingo", "clio", "golf", "polo", "c3", "c4", "206", "207", "208"];
+    for (const m of allKeywords) { if (title.includes(m)) return m; }
+    return null;
+};
+
+// ==========================================
+// 3. MODULES D'ANALYSE
+// ==========================================
+
+const analyzeScripts = (text) => {
+    let flags = []; let scoreMod = 0;
+    for (const script of SCAM_SCRIPTS_DB) {
+        if (script.pattern.test(text)) {
+            scoreMod += 45; 
+            flags.push({ type: 'danger', label: script.label, desc: script.desc });
+        }
+    }
+    return { scoreMod, flags };
+};
+
+const checkConsistency = (adText, reportText, adYear) => {
+    if (!reportText || reportText.length < 50) return { valid: true, flags: [] }; 
+    let flags = []; let isValid = true;
+    const adModel = extractPreciseModel(adText);
+    const report = reportText.toLowerCase();
+
+    if (adModel) {
+        if (!report.includes(adModel)) {
+            const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
+            isValid = false;
+            flags.push({ type: 'fatal', label: "Rapport Incohérent (Modèle)", desc: `Annonce pour "${adModel.toUpperCase()}" mais rapport pour "${detectedReportModel.toUpperCase()}". Rapport ignoré.` });
+            return { valid: false, flags }; 
+        }
+    }
+
+    if (adYear) {
+        let reportYear = null;
+        const matchStrictAutoviza = reportText.match(/(\d{4})[,\s\wéû]+Mise en circulation/i);
+        const matchStandard = report.match(/mise en circulation.*?(\d{2}\/\d{2}\/)(\d{4})/i);
+
+        if (matchStandard) reportYear = parseInt(matchStandard[2]);
+        else if (matchStrictAutoviza) reportYear = parseInt(matchStrictAutoviza[1]);
+
+        if (reportYear && Math.abs(reportYear - adYear) > 1) { 
+            isValid = false;
+            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce ${adYear} vs Rapport ${reportYear}.` });
+        }
+    }
+    return { valid: isValid, flags };
+};
+
+const analyzeReliability = (adText, year) => {
+    let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
+    if (!year) return { scoreMod, flags };
+    const detectedModel = extractPreciseModel(adText);
+    if (!detectedModel) return { scoreMod, flags };
+    const entry = CAR_KNOWLEDGE_DB.find(e => e.keywords.includes(detectedModel));
+    if (entry && entry.badYears.includes(year)) {
+        let engineMatch = true;
+        if (entry.engines) engineMatch = entry.engines.some(e => cleanAd.includes(e));
+        if (engineMatch) { scoreMod += 30; flags.push({ type: 'warning', label: "Modèle à Risque", desc: entry.msg }); }
+    }
+    return { scoreMod, flags };
+};
+
+const analyzeHistory = (adText, autoText) => { 
+    let flags = []; let scoreMod = 0; const ad = adText.toLowerCase(); const auto = autoText.toLowerCase();
+    const claimsFirst = /(?:1|premi[eè]re)[\s-]*main/i.test(ad);
+    const blackHole = auto.includes("période sans information") || auto.includes("importation");
+    const ownersMatch = auto.match(/(\d+)\s+propriétaires/i);
+    const count = ownersMatch ? parseInt(ownersMatch[1]) : 0;
+    if (claimsFirst) {
+        if (count > 1) { scoreMod += 60; flags.push({ type: 'danger', label: "Mensonge 1ère Main", desc: `Rapport indique ${count} propriétaires.` }); }
+        else if (blackHole) { scoreMod += 55; flags.push({ type: 'danger', label: "Fausse 1ère Main (Import)", desc: "Véhicule importé ou historique manquant." }); }
+    }
+    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Import / Trou Noir", desc: "Historique partiel. Km non garanti." }); }
+    return { scoreMod, flags };
+};
+
+const analyzeFinancial = (cleanText, headerPrice) => { 
+    let f=[], s=0; const a = cleanText.toLowerCase();
+    if(a.includes("frais de dossier") && !hasNegativeContext(a, "frais de dossier")) { s+=20; f.push({type:'warning', label:'Frais Cachés', desc:'Prix affiché hors frais.'}); }
+    
+    const textPrices = a.match(/(\d{1,3}(?:[\s.]\d{3})*)\s?€/g);
+    if (textPrices && headerPrice) {
+        textPrices.forEach(p => {
+            const val = parseInt(p.replace(/\D/g, ''));
+            if (val > (headerPrice * 5)) return; // Ignore capital
+            if (val > 1990 && val < 2030) return; // Ignore années
+            const context = a.substring(Math.max(0, a.indexOf(p)-30), a.indexOf(p));
+            if (/prévoir|facture|réparation|frais|valeur|cote/i.test(context)) return;
+
+            if (val > 1000 && Math.abs(val - headerPrice) > (headerPrice * 0.2)) {
+                if (!a.includes("reprise") && !a.includes("crédit") && !a.includes("apport")) {
+                    s+=50; f.push({type:'danger', label:"Prix Contradictoire", desc:`${headerPrice}€ vs ${val}€.`});
+                }
+            }
+        });
+    }
+    return {scoreMod:s, flags:f};
+};
+
+const analyzeMechanical = (cleanText) => {
+    let f=[], s=0; const a = cleanText.toLowerCase();
+    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde (Berceau)", desc:"Changement de berceau = Choc antérieur ou corrosion."}); }
+    if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
+    return {scoreMod:s, flags:f};
+};
+
+const investigateCompany = async (rawSiren) => {
+    const siren = rawSiren.replace(/\D/g, ''); if (siren.length !== 9) return null;
+    try {
+        const data = await nodeRequest(`https://recherche-entreprises.api.gouv.fr/search?q=${siren}`, 5000);
+        
+        if (!data) return { status: "API_DOWN", exists: null };
+        if (!data.results || data.results.length === 0) return { exists: false };
+        
+        const c = data.results[0]; const s = c.siege; const now = new Date();
+        const ageB = Math.floor((now - new Date(c.date_creation)) / (1000 * 60 * 60 * 24 * 30));
+        const ageA = Math.floor((now - new Date(s.date_creation || c.date_creation)) / (1000 * 60 * 60 * 24 * 30));
+        
+        let mInfo = "Non public", mAge = null;
+        if (c.dirigeants && c.dirigeants[0]) { 
+            const d = c.dirigeants[0]; const n = `${d.prenoms||''} ${d.nom||''}`.trim();
+            if (d.annee_de_naissance) { mAge = new Date().getFullYear() - d.annee_de_naissance; mInfo = `${n} (${mAge} ans)`; } else mInfo = n;
+        }
+        
+        let moves = 0, hist = [];
+        let previousTenure = 0;
+        if (c.matching_etablissements) {
+            const e = c.matching_etablissements.sort((a,b)=>new Date(b.date_creation)-new Date(a.date_creation));
+            const y1 = new Date(); y1.setFullYear(now.getFullYear()-1);
+            
+            if (e.length > 1) previousTenure = Math.floor((new Date(e[0].date_creation) - new Date(e[1].date_creation)) / (1000 * 60 * 60 * 24 * 30));
+            
+            const showHistory = ageA < 24; 
+            if (showHistory) {
+                 hist = e.map(x => { if(new Date(x.date_creation)>y1) moves++; return `${x.etat_administratif==='A'?'✅':'❌'} : ${x.libelle_commune||'Inc.'} (${new Date(x.date_creation).toLocaleDateString('fr-FR')})`; });
+            }
+        }
+
+        const isStableMove = ageA < 12 && previousTenure > 24;
+
+        return { 
+            status: "OK", exists: true, name: c.nom_complet, isClosed: c.etat_administratif === 'C', naf: c.activite_principale, 
+            address: `${s.numero_voie||''} ${s.type_voie||''} ${s.libelle_voie}, ${s.code_postal} ${s.libelle_commune}`, 
+            ageBoiteMois: ageB, ageAdresseMois: ageA, managerInfo: mInfo, managerAge: mAge, recentMoves: moves, history: hist, isGarage: c.activite_principale.startsWith('45'),
+            isStableMove 
+        };
+    } catch { return { status: "API_DOWN", exists: null }; }
+};
+
+// ==========================================
+// 5. ROUTE PRINCIPALE AVEC VALIDATION
+// ==========================================
+app.post('/api/scan/auto', async (req, res) => {
+    const { description, autoviza, siren, extractedPrice, extractedYear, accountYear } = req.body;
+
+    // --- SÉCURITÉ 5 : VALIDATION DES ENTRÉES ---
+    if (description && typeof description !== 'string') return res.status(400).json({ error: 'Invalid description' });
+    if (autoviza && typeof autoviza !== 'string') return res.status(400).json({ error: 'Invalid autoviza' });
+    if (siren && (typeof siren !== 'string' || !/^\d{9}$/.test(siren))) return res.status(400).json({ error: 'Invalid SIREN' });
+    if (description && description.length > 50000) return res.status(400).json({ error: 'Description too long' });
+
+    const cleanDescription = extractMainDescription(description);
+
+    let score = 0;
+    let report = [];
+    let positives = [];
+    let mapsLink = null;
+    let companyHistory = [];
+    let isPro = false;
+    let accountAgeRisk = false;
+
+    const consistency = checkConsistency(description, autoviza, extractedYear);
+    const validAutoviza = consistency.valid ? autoviza : ""; 
+    
+    if (!consistency.valid) {
+        report = [...report, ...consistency.flags];
+        score += 60; 
+    } else if (autoviza.length > 50) {
+        positives.push({ label: "Rapport Analysé", desc: "Cohérent avec l'annonce." });
+    }
+
+    if (consistency.valid || !autoviza) {
+        const relAnalysis = analyzeReliability(cleanDescription, extractedYear);
+        score += relAnalysis.scoreMod;
+        report = [...report, ...relAnalysis.flags];
+
+        const histAnalysis = analyzeHistory(cleanDescription, validAutoviza);
+        score += histAnalysis.scoreMod;
+        report = [...report, ...histAnalysis.flags];
+
+        const mechAnalysis = analyzeMechanical(cleanDescription);
+        score += mechAnalysis.scoreMod;
+        report = [...report, ...mechAnalysis.flags];
+    }
+
+    const scriptAnalysis = analyzeScripts(cleanDescription);
+    score += scriptAnalysis.scoreMod;
+    report = [...report, ...scriptAnalysis.flags];
+
+    const finAnalysis = analyzeFinancial(cleanDescription, extractedPrice);
+    score += finAnalysis.scoreMod;
+    report = [...report, ...finAnalysis.flags];
+
+    if (siren) {
+        isPro = true;
+        const info = await investigateCompany(siren);
+        
+        if (info.status === "API_DOWN") {
+            score += 20; report.push({ type: 'warning', label: "Vérification Impossible", desc: "API État hors service." });
+        } else if (info.exists === false) { 
+            score += 100; report.push({ type: 'danger', label: "FAUX SIREN", desc: "Numéro inconnu." }); 
+        } else {
+             mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address)}`;
+             companyHistory = info.history;
+             if (info.isClosed) { score += 100; report.push({ type: 'danger', label: "FERMÉE", desc: "Radiée." }); }
+             else if (info.recentMoves >= 2) { score += 65; report.push({ type: 'danger', label: "INSTABILITÉ CRITIQUE", desc: `${info.recentMoves} déménagements en 1 an.` }); }
+             else if (info.ageAdresseMois < 6 && info.ageBoiteMois > 24) {
+                 if (info.isStableMove) {
+                     score -= 5; positives.push({ label: "Déménagement Récent", desc: "Agrandissement probable (Ancien siège stable)." });
+                 } else {
+                     score += 30; report.push({ type: 'warning', label: "Adresse Récente", desc: "Déménagement récent." });
+                 }
+             }
+             else if (info.ageAdresseMois > 24) { score -= 15; positives.push({ label: "Adresse Stable", desc: `Depuis ${Math.floor(info.ageAdresseMois/12)} ans.` }); }
+             
+             if (!info.isGarage) { score += 45; report.push({ type: 'warning', label: "Activité Douteuse", desc: "Pas un garage." }); }
+             else { score -= 10; positives.push({ label: "Pro de l'Auto", desc: "Activité vérifiée." }); }
+             if (info.managerInfo) positives.push({ label: "Dirigeant", desc: info.managerInfo });
+             
+             report.push({ type: 'warning', label: "Risque d'Usurpation", desc: "Vérifiez le téléphone sur Maps." });
+        }
+    } else { positives.push({ label: "Vendeur", desc: "Particulier" }); }
+
+    if (accountYear) {
+        const age = new Date().getFullYear() - accountYear;
+        if (age < 1) { score += 25; accountAgeRisk = true; report.push({ type: 'warning', label: "Compte Récent", desc: "Créé cette année." }); }
+        else if (age > 4) { score -= 10; positives.push({ label: "Compte Ancien", desc: `Membre ${age} ans.` }); }
+    }
+    
+    const text = cleanDescription.toLowerCase();
+    if (text.includes("mandat cash") || text.includes("coupons pcs")) { score += 100; report.push({ type: 'danger', label: "Arnaque Paiement", desc: "Méthode illégale." }); }
+
+    if (extractedPrice && extractedYear) {
+        let minPrice = extractedYear >= 2015 ? 5000 : 2000;
+        if (extractedPrice < minPrice * 0.7) { score += 45; report.push({ type: 'warning', label: "Prix Suspect", desc: "Très bas." }); }
+        else { score -= 10; positives.push({ label: "Prix Cohérent", desc: "Moyenne OK." }); }
+    }
+
+    score = Math.min(Math.max(score, 0), 100);
+    const verdict = score >= 80 ? "DANGER" : score > 40 ? "SUSPECT" : "FIABLE";
+
+    res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro, accountAgeRisk });
+});
+
+app.listen(PORT, () => console.log(`✅ Serveur SÉCURISÉ prêt (Port ${PORT})`));
