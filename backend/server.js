@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const https = require('https');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 // --- 0. SÉCURITÉ CORS ---
 app.use(cors({
@@ -157,32 +157,58 @@ const extractMainDescription = (fullText) => {
     return fullText.substring(start, end);
 };
 
+// --- NOUVELLE LISTE COMPLÈTE DE MODÈLES ---
+const CAR_MODELS_DB = [
+    // PETITES CITADINES
+    "clio", "208", "c3", "yaris", "polo", "corsa", "sandero", "fiesta", "207", "206", 
+    "twingo", "107", "108", "c1", "aygo", "i10", "i20", "picanto", "rio", "micra", 
+    "swift", "zoe", "spring", "up", "citigo", "mii", "panda", "500", "ka", "adam", 
+    "karl", "spark", "alto", "celerio", "space star", "a1", "mito", "ds3",
+
+    // COMPACTES
+    "golf", "308", "megane", "c4", "a3", "serie 1", "classe a", "focus", "astra", 
+    "leon", "ibiza", "fabia", "octavia", "scala", "tipo", "ceed", "i30", "auris", 
+    "corolla", "civic", "mazda 3", "delta", "giulietta", "v40", "c30", "ds4",
+
+    // BERLINES / ROUTIÈRES
+    "passat", "508", "c5", "talisman", "insignia", "mondeo", "a4", "a5", "serie 3", 
+    "serie 5", "classe c", "classe e", "superb", "avensis", "mazda 6", "5008", 
+    "arteon", "xe", "xf", "ds5", "model 3", "laguna", "407", "607", "c6",
+
+    // SUV / CROSSOVERS
+    "captur", "2008", "3008", "c3 aircross", "c5 aircross", "kadjar", "arkana", 
+    "austral", "kuga", "puma", "duster", "tiguan", "t-roc", "t-cross", "touareg", 
+    "q2", "q3", "q5", "x1", "x3", "x5", "gla", "glc", "gle", "sportage", "tucson", 
+    "kona", "niro", "juke", "qashqai", "x-trail", "rav4", "c-hr", "yaris cross", 
+    "cx-3", "cx-5", "cx-30", "renegade", "compass", "ds7", "ds3 crossback", 
+    "mokka", "grandland", "crossland", "jogger", "stepway", "ignis", "vitara",
+
+    // MONOSPACES / UTILITAIRES FAMILIAUX
+    "scenic", "espace", "picasso", "berlingo", "rifter", "partner", "kangoo", 
+    "touran", "sharan", "c-max", "s-max", "galaxy", "zafira", "meriva", "b-max", 
+    "lodgy", "dokker", "roomster", "yeti", "vito", "multivan", "traveller", "expert"
+];
+
 const extractPreciseModel = (text) => {
     if (!text) return null;
     const t = text.toLowerCase();
-    // Liste simplifiée pour le matching de l'IA prix
-    if (t.includes("clio")) return "clio";
-    if (t.includes("208")) return "208";
-    if (t.includes("c3")) return "c3";
-    if (t.includes("golf")) return "golf";
-    if (t.includes("polo")) return "polo";
-    if (t.includes("308")) return "308";
-    if (t.includes("megane") || t.includes("mégane")) return "megane";
-    if (t.includes("captur")) return "captur";
-    if (t.includes("2008")) return "2008";
-    if (t.includes("duster")) return "duster";
-    if (t.includes("sandero")) return "sandero";
-    if (t.includes("twingo")) return "twingo";
-    if (t.includes("500") && !t.includes("5008") && !t.includes("500x")) return "500";
-    if (t.includes("a3")) return "a3";
-    if (t.includes("serie 1") || t.includes("série 1")) return "serie 1";
-    if (t.includes("qashqai")) return "qashqai";
-    if (t.includes("yaris")) return "yaris";
-    if (t.includes("fiesta")) return "fiesta";
-    
-    // Fallback sur regex
+
+    // 1. Structure LeBonCoin
     const structureMatch = text.match(/Modèle[\s\n]+([a-zA-Z0-9éè]+)/i);
-    if (structureMatch && structureMatch[1]) return structureMatch[1].toLowerCase();
+    if (structureMatch && structureMatch[1]) {
+        return structureMatch[1].toLowerCase();
+    }
+
+    // 2. Recherche dans la liste (Triée par longueur pour éviter les conflits ex: C4 vs C4 Picasso)
+    const sortedModels = CAR_MODELS_DB.sort((a, b) => b.length - a.length);
+
+    for (const model of sortedModels) {
+        if (t.includes(model)) {
+            // FIX SPÉCIAL : Eviter que "500" matche "5008" ou "500x"
+            if (model === "500" && (t.includes("5008") || t.includes("500x") || t.includes("500 x"))) continue;
+            return model;
+        }
+    }
     
     return null;
 };
@@ -223,7 +249,7 @@ const estimerPrixIA = (modele, annee, km) => {
                 'Content-Type': 'application/json',
                 'Content-Length': postData.length,
             },
-            timeout: 60000, // 60s pour le Cold Start
+            timeout: 60000, 
         };
 
         const req = https.request(options, (res) => {
@@ -292,26 +318,21 @@ const checkConsistency = (adText, reportText, adYear) => {
 const analyzeReliability = (adText, year) => {
     let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
     if (!year) return { scoreMod, flags };
-    const detectedModel = extractPreciseModel(adText) || "";
     
     for (const entry of CAR_KNOWLEDGE_DB) {
-        // 1. Vérifier si l'année correspond aux années à risques
         let yearMatch = false;
         if (entry.badYears) {
              if (entry.badYears.includes(year)) yearMatch = true;
         } else {
-             yearMatch = true; // Si pas d'années spécifiées, ça s'applique tout le temps (ex: 1.2 TCe)
+             yearMatch = true; 
         }
 
-        // 2. Vérifier les mots clés (Moteur ou Modèle)
         const keywordMatch = entry.keywords.some(k => cleanAd.includes(k));
 
         if (yearMatch && keywordMatch) {
-            // Filtre spécial pour PureTech: on ne flag pas si la courroie a été changée
             if (entry.id === 'puretech' && (cleanAd.includes("courroie faite") || cleanAd.includes("distribution faite"))) {
                 continue; 
             }
-
             scoreMod += 35; 
             flags.push({ type: 'warning', label: "Fiabilité Modèle/Moteur", desc: entry.msg });
         }
@@ -395,6 +416,8 @@ const investigateCompany = async (rawSiren) => {
 app.post('/api/scan/auto', async (req, res) => {
     try {
         const { description = "", autoviza = "", siren = "", extractedPrice = null, extractedYear = null, accountYear = null } = req.body || {}; 
+        
+        // 1. NETTOYAGE (Vital pour ne pas lire les pubs en bas de page)
         const cleanDescription = extractMainDescription(description);
 
         let score = 0;
@@ -405,8 +428,8 @@ app.post('/api/scan/auto', async (req, res) => {
         let isPro = false;
         let accountAgeRisk = false;
 
-        // A. COHÉRENCE
-        const consistency = checkConsistency(description, autoviza, extractedYear);
+        // A. COHÉRENCE (Utilise maintenant cleanDescription)
+        const consistency = checkConsistency(cleanDescription, autoviza, extractedYear);
         const validAutoviza = consistency.valid ? autoviza : ""; 
         
         if (!consistency.valid) {
@@ -417,8 +440,8 @@ app.post('/api/scan/auto', async (req, res) => {
         }
 
         // --- DONNÉES CLÉS ---
-        const detectedModel = extractPreciseModel(description);
-        const extractedKm = extractMileage(description);
+        const detectedModel = extractPreciseModel(cleanDescription); // Utilise aussi le texte nettoyé
+        const extractedKm = extractMileage(cleanDescription);
         
         // --- B. ANALYSES ---
         const scriptAnalysis = analyzeScripts(cleanDescription);
