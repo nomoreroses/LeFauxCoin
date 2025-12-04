@@ -6,7 +6,7 @@ import {
   Database
 } from 'lucide-react';
 
-// MODIFICATION ICI : On laisse vide pour utiliser le proxy Vercel défini dans vercel.json
+// ✅ URL CORRIGÉE (Celle qui marche selon ton screenshot)
 const API_URL = "https://lefauxcoin.onrender.com";
 
 const ScamScanner = () => {
@@ -46,55 +46,55 @@ const ScamScanner = () => {
     setDetectedFields(newDetected);
   };
 
-  // --- FONCTION DE SCAN AVEC PROXY VERCEL & RETRY ---
+  // --- FONCTION DE SCAN AVEC RETRY (Spécial Render Gratuit) ---
   const launchScan = async () => {
-    // 1. Validation basique
     if (!scanData.description && !scanData.siren && !scanData.autoviza) return alert("Collez au moins l'annonce.");
     
     setLoading(true); 
     setResult(null);
 
-    // 2. Fonction interne pour gérer les essais multiples (si le serveur dort)
     const tryFetch = async (retries = 2) => {
         try {
-            // NOTE : On appelle "/api/..." directement. Vercel fera le relais vers Render.
-            const response = await fetch(`/api/scan/auto`, {
+            console.log("Tentative de connexion à:", `${API_URL}/api/scan/auto`);
+            
+            const response = await fetch(`${API_URL}/api/scan/auto`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(scanData),
-                signal: AbortSignal.timeout(45000) // 45s timeout (Render peut être lent au réveil)
+                signal: AbortSignal.timeout(45000) // 45s max
             });
 
             if (!response.ok) {
-                // Si erreur 404, ça veut dire que le Proxy Vercel ne trouve pas la route ou Render est down
-                throw new Error(`Erreur HTTP: ${response.status}`);
+                const errorText = await response.text();
+                throw new Error(`Erreur HTTP: ${response.status} - ${errorText}`);
             }
             
             return await response.json();
 
         } catch (error) {
-            console.warn("Tentative échouée :", error);
-            // Si c'est une erreur réseau ou timeout, on réessaie
+            console.warn("Echec tentative:", error);
             if (retries > 0) {
                 console.log("Serveur endormi... nouvelle tentative dans 3s.");
-                await new Promise(r => setTimeout(r, 3000)); // On attend 3s
-                return tryFetch(retries - 1); // On réessaie
+                await new Promise(r => setTimeout(r, 3000));
+                return tryFetch(retries - 1);
             }
-            throw error; // Sinon, on abandonne
+            throw error;
         }
     };
 
-    // 3. Exécution
     try {
         const data = await tryFetch(); 
         
+        // Sécurité si le backend renvoie une erreur interne formatée
+        if(data.verdict === "ERREUR") throw new Error("Erreur interne du serveur d'analyse.");
+
         const trustScore = 100 - data.score;
         setResult({ ...data, trustScore });
         setView('result');
 
     } catch (error) {
         console.error(error);
-        alert("Le serveur est en train de démarrer ou une erreur est survenue. Veuillez réessayer dans quelques secondes.");
+        alert(`Erreur de connexion : ${error.message}. Vérifiez votre connexion ou réessayez.`);
     } finally {
         setLoading(false);
     }
@@ -116,8 +116,8 @@ const ScamScanner = () => {
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
       <h2 className="text-2xl font-bold text-slate-800">Analyse en cours...</h2>
-      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données via le serveur sécurisé...</p>
-      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Si c'est la première analyse depuis 15min, cela peut prendre jusqu'à 45 secondes.</p>
+      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données via le serveur...</p>
+      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Si le serveur est en veille, cela peut prendre jusqu'à 30 secondes.</p>
     </div>
   );
 

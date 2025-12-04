@@ -6,23 +6,22 @@ const https = require('https');
 const app = express();
 const PORT = 5000;
 
-// --- 1. SÉCURITÉ CORS (Portes Ouvertes) ---
+// --- 0. SÉCURITÉ CORS & CONFIGURATION ---
+// On ouvre tout pour éviter les blocages Vercel
 app.use(cors({
-    origin: '*', // Accepte tout le monde (Vercel, Localhost, Curl...)
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(bodyParser.json());
 
-// --- 2. PAGE D'ACCUEIL ---
+// Page d'accueil pour vérifier que le serveur est en ligne
 app.get('/', (req, res) => {
-    res.send('✅ API LeFauxCoin en ligne (v2.0 - Blindée)');
+    res.send('✅ API LeFauxCoin est EN LIGNE et prête.');
 });
 
-// --- 3. LOGIQUE MÉTIER ---
-
-// ... (Bases de données inchangées, je les remets pour que le fichier soit complet)
+// --- 1. KNOWLEDGE BASE (Base de connaissances complète) ---
 const CAR_KNOWLEDGE_DB = [
     { id: "laguna2", keywords: ["laguna"], badYears: [2001, 2002, 2003], msg: "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes." },
     { id: "scenic2", keywords: ["scenic", "scénic", "megane", "mégane"], badYears: [2003, 2004, 2005], msg: "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006." },
@@ -42,7 +41,7 @@ const SCAM_SCRIPTS_DB = [
     { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
 ];
 
-// Utilitaires robustes (qui ne plantent pas sur null/undefined)
+// --- 2. UTILITIES (Fonctions utilitaires sécurisées) ---
 const nodeRequest = (url) => {
     return new Promise((resolve, reject) => {
         const req = https.get(url, (res) => {
@@ -54,7 +53,8 @@ const nodeRequest = (url) => {
 };
 
 const normalizeString = (str) => {
-    if (!str) return ""; // Sécurité
+    // Sécurité : si str est null/undefined, on renvoie chaine vide
+    if (!str) return "";
     return str.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/@/g, 'a').replace(/[^a-z0-9 ]/g, '');
 };
 
@@ -92,7 +92,8 @@ const extractPreciseModel = (text) => {
     return null;
 };
 
-// Analyses
+// --- 3. ANALYSES ---
+
 const analyzeScripts = (text) => {
     if (!text) return { scoreMod: 0, flags: [] };
     let flags = []; let scoreMod = 0;
@@ -106,25 +107,29 @@ const analyzeScripts = (text) => {
 };
 
 const checkConsistency = (adText, reportText, adYear) => {
-    // Si pas de rapport, on dit que c'est valide (pour ne pas bloquer)
-    if (!reportText || reportText.length < 10) return { valid: true, flags: [] }; 
+    // Si pas de rapport, on renvoie valide pour ne pas bloquer
+    if (!reportText || reportText.length < 20) return { valid: true, flags: [] }; 
     
     let flags = [];
     let isValid = true;
     const adModel = extractPreciseModel(adText);
     const report = reportText.toLowerCase();
 
-    if (adModel && !report.includes(adModel)) {
-        const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
-        isValid = false;
-        flags.push({ 
-            type: 'fatal', 
-            label: "Rapport Incohérent (Modèle)", 
-            desc: `Annonce pour "${adModel.toUpperCase()}" mais rapport pour "${detectedReportModel.toUpperCase()}".` 
-        });
-        return { valid: false, flags }; 
+    // A. Check MODÈLE
+    if (adModel) {
+        if (!report.includes(adModel)) {
+            const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
+            isValid = false;
+            flags.push({ 
+                type: 'fatal', 
+                label: "Rapport Incohérent (Modèle)", 
+                desc: `Annonce pour "${adModel.toUpperCase()}" mais rapport pour "${detectedReportModel.toUpperCase()}". Rapport ignoré.` 
+            });
+            return { valid: false, flags }; 
+        }
     }
 
+    // B. Check ANNÉE
     if (adYear) {
         let reportYear = null;
         const matchDate = report.match(/mise en circulation.*?(\d{2}\/\d{2}\/)(\d{4})/i);
@@ -135,7 +140,7 @@ const checkConsistency = (adText, reportText, adYear) => {
 
         if (reportYear && Math.abs(reportYear - adYear) > 1) { 
             isValid = false;
-            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce de ${adYear} mais rapport de ${reportYear}.` });
+            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce de ${adYear} mais rapport de ${reportYear} (Mise en circulation).` });
         }
     }
     return { valid: isValid, flags };
@@ -156,7 +161,7 @@ const analyzeReliability = (adText, year) => {
 };
 
 const analyzeHistory = (adText, autoText) => { 
-    // SÉCURITÉ : On vérifie que les textes existent avant de faire toLowerCase
+    // Protection contre undefined
     const ad = (adText || "").toLowerCase(); 
     const auto = (autoText || "").toLowerCase();
     
@@ -170,7 +175,7 @@ const analyzeHistory = (adText, autoText) => {
         if (count > 1) { scoreMod += 60; flags.push({ type: 'danger', label: "Mensonge 1ère Main", desc: `Rapport indique ${count} propriétaires.` }); }
         else if (blackHole) { scoreMod += 55; flags.push({ type: 'danger', label: "Fausse 1ère Main (Import)", desc: "Véhicule importé ou historique manquant." }); }
     }
-    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Import / Trou Noir", desc: "Historique partiel." }); }
+    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Import / Trou Noir", desc: "Historique partiel. Km non garanti." }); }
     return { scoreMod, flags };
 };
 
@@ -182,8 +187,8 @@ const analyzeFinancial = (cleanText, headerPrice) => {
     if (textPrices && headerPrice) {
         textPrices.forEach(p => {
             const val = parseInt(p.replace(/\D/g, ''));
-            if (val > (headerPrice * 5)) return; 
-            if (val > 1990 && val < 2030) return; 
+            if (val > (headerPrice * 5)) return;
+            if (val > 1990 && val < 2030) return;
             
             const context = a.substring(Math.max(0, a.indexOf(p)-30), a.indexOf(p));
             if (/prévoir|facture|réparation|frais|valeur|cote/i.test(context)) return;
@@ -200,7 +205,7 @@ const analyzeFinancial = (cleanText, headerPrice) => {
 
 const analyzeMechanical = (cleanText) => {
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
-    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde", desc:"Changement de berceau = Choc."}); }
+    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde (Berceau)", desc:"Changement de berceau = Choc antérieur ou corrosion."}); }
     if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
     return {scoreMod:s, flags:f};
 };
@@ -231,10 +236,14 @@ const investigateCompany = async (rawSiren) => {
     } catch { return "ERROR_NETWORK"; }
 };
 
-// --- 4. ROUTE PRINCIPALE API (CORRIGÉE CONTRE LES CRASHs) ---
+// --- 4. ROUTE PRINCIPALE (BLINDÉE CONTRE LES ERREURS 500) ---
 app.post('/api/scan/auto', async (req, res) => {
     try {
-        // CORRECTION MAJEURE ICI : Valeurs par défaut pour éviter "undefined"
+        console.log("Reçu :", req.body); // Log pour debugger
+
+        // ⚠️ C'EST ICI LE CORRECTIF MAGIQUE "ANTI-CRASH" ⚠️
+        // On définit des valeurs par défaut pour TOUT. 
+        // Comme ça, req.body peut être vide, ça ne plantera pas.
         const { 
             description = "", 
             autoviza = "", 
@@ -242,7 +251,7 @@ app.post('/api/scan/auto', async (req, res) => {
             extractedPrice = null, 
             extractedYear = null, 
             accountYear = null 
-        } = req.body;
+        } = req.body || {}; 
 
         const cleanDescription = extractMainDescription(description);
 
@@ -261,7 +270,7 @@ app.post('/api/scan/auto', async (req, res) => {
         if (!consistency.valid) {
             report = [...report, ...consistency.flags];
             score += 60; 
-        } else if (autoviza.length > 50) {
+        } else if (autoviza && autoviza.length > 50) {
             positives.push({ label: "Rapport Analysé", desc: "Cohérent." });
         }
 
@@ -295,9 +304,7 @@ app.post('/api/scan/auto', async (req, res) => {
             if (info && info !== "ERROR_NETWORK") {
                  if (info.exists === false) { score += 100; report.push({ type: 'danger', label: "FAUX SIREN", desc: "Inconnu." }); }
                  else {
-                     // CORRECTION : Utilisation sécurisée de l'interpolation de chaîne
                      mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address)}`;
-                     
                      companyHistory = info.history;
                      if (info.isClosed) { score += 100; report.push({ type: 'danger', label: "FERMÉE", desc: "Radiée." }); }
                      else if (info.recentMoves >= 2) { score += 65; report.push({ type: 'danger', label: "INSTABILITÉ CRITIQUE", desc: `${info.recentMoves} déménagements en 1 an.` }); }
@@ -330,11 +337,13 @@ app.post('/api/scan/auto', async (req, res) => {
         score = Math.min(Math.max(score, 0), 100);
         const verdict = score >= 80 ? "DANGER" : score > 40 ? "SUSPECT" : "FIABLE";
 
+        // Envoi de la réponse JSON
         res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro, accountAgeRisk });
-    
-    } catch (criticalError) {
-        console.error("CRASH SERVEUR:", criticalError);
-        res.status(500).json({ error: "Erreur interne", details: criticalError.message });
+
+    } catch (error) {
+        // En cas de gros crash imprévu, on renvoie une erreur propre au lieu de rien du tout
+        console.error("ERREUR FATALE:", error);
+        res.status(500).json({ error: "Erreur serveur interne", message: error.message });
     }
 });
 
