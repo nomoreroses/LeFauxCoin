@@ -7,21 +7,18 @@ const app = express();
 const PORT = 5000;
 
 // --- 0. SÉCURITÉ CORS & CONFIGURATION ---
-// On ouvre tout pour éviter les blocages Vercel
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(bodyParser.json());
 
-// Page d'accueil pour vérifier que le serveur est en ligne
 app.get('/', (req, res) => {
     res.send('✅ API LeFauxCoin est EN LIGNE et prête.');
 });
 
-// --- 1. KNOWLEDGE BASE (Base de connaissances complète) ---
+// --- 1. KNOWLEDGE BASE ---
 const CAR_KNOWLEDGE_DB = [
     { id: "laguna2", keywords: ["laguna"], badYears: [2001, 2002, 2003], msg: "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes." },
     { id: "scenic2", keywords: ["scenic", "scénic", "megane", "mégane"], badYears: [2003, 2004, 2005], msg: "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006." },
@@ -41,8 +38,8 @@ const SCAM_SCRIPTS_DB = [
     { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
 ];
 
-// --- 2. UTILITIES (Fonctions utilitaires sécurisées) ---
-const nodeRequest = (url) => {
+// --- 2. UTILITIES (Ajout des fonctions pour le prix et le KM) ---
+const nodeRequest = (url) => { /* ... (Fonction complète du début) ... */
     return new Promise((resolve, reject) => {
         const req = https.get(url, (res) => {
             let data = ''; res.on('data', c => data += c);
@@ -53,7 +50,6 @@ const nodeRequest = (url) => {
 };
 
 const normalizeString = (str) => {
-    // Sécurité : si str est null/undefined, on renvoie chaine vide
     if (!str) return "";
     return str.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/@/g, 'a').replace(/[^a-z0-9 ]/g, '');
 };
@@ -92,9 +88,64 @@ const extractPreciseModel = (text) => {
     return null;
 };
 
-// --- 3. ANALYSES ---
+// NOUVELLE UTILITY : Extraction du KM pour l'IA de prix
+const extractMileage = (text) => {
+    if (!text) return 150000;
+    const kmMatch = text.match(/(\d{2,3})[\s.]?(\d{3})\s*(?:km|kms|kilom[eè]tre)/i) || text.match(/(\d{4,6})\s*(?:km|kms|kilom[eè]tre)/i);
+    if (kmMatch) {
+        let km = parseInt((kmMatch[1] + (kmMatch[2] || '000')).replace(/\D/g, ''));
+        if (km < 1000) km *= 1000;
+        return km;
+    }
+    return 150000;
+};
 
-const analyzeScripts = (text) => {
+// NOUVELLE UTILITY : Appel à l'API Python pour l'estimation
+const PYTHON_API_URL = "https://api-prix-python.onrender.com";
+
+const estimerPrixIA = (modele, annee, km) => {
+    if (!modele || !annee || !km) return null;
+    
+    return new Promise((resolve) => {
+        const postData = JSON.stringify({ modele, annee, km });
+        
+        const options = {
+            hostname: 'api-prix-python.onrender.com',
+            port: 443,
+            path: '/estimer',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': postData.length,
+            },
+            timeout: 15000,
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(data);
+                    resolve(result);
+                } catch (e) {
+                    console.error("API Price Error: Invalid JSON response.");
+                    resolve(null);
+                }
+            });
+        });
+
+        req.on('error', (e) => {
+            console.error(`API Price Network Error: ${e.message}`);
+            resolve(null);
+        });
+
+        req.end(postData);
+    });
+};
+
+// --- 3. ANALYSES (Le reste des analyses originales) ---
+const analyzeScripts = (text) => { /* ... (Logic intacte) ... */
     if (!text) return { scoreMod: 0, flags: [] };
     let flags = []; let scoreMod = 0;
     for (const script of SCAM_SCRIPTS_DB) {
@@ -106,8 +157,7 @@ const analyzeScripts = (text) => {
     return { scoreMod, flags };
 };
 
-const checkConsistency = (adText, reportText, adYear) => {
-    // Si pas de rapport, on renvoie valide pour ne pas bloquer
+const checkConsistency = (adText, reportText, adYear) => { /* ... (Logic intacte) ... */
     if (!reportText || reportText.length < 20) return { valid: true, flags: [] }; 
     
     let flags = [];
@@ -146,7 +196,7 @@ const checkConsistency = (adText, reportText, adYear) => {
     return { valid: isValid, flags };
 };
 
-const analyzeReliability = (adText, year) => {
+const analyzeReliability = (adText, year) => { /* ... (Logic intacte) ... */
     let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
     if (!year) return { scoreMod, flags };
     const detectedModel = extractPreciseModel(adText);
@@ -160,8 +210,7 @@ const analyzeReliability = (adText, year) => {
     return { scoreMod, flags };
 };
 
-const analyzeHistory = (adText, autoText) => { 
-    // Protection contre undefined
+const analyzeHistory = (adText, autoText) => { /* ... (Logic intacte) ... */
     const ad = (adText || "").toLowerCase(); 
     const auto = (autoText || "").toLowerCase();
     
@@ -179,7 +228,7 @@ const analyzeHistory = (adText, autoText) => {
     return { scoreMod, flags };
 };
 
-const analyzeFinancial = (cleanText, headerPrice) => { 
+const analyzeFinancial = (cleanText, headerPrice) => { /* ... (Logic intacte) ... */
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
     if(a.includes("frais de dossier") && !hasNegativeContext(a, "frais de dossier")) { s+=20; f.push({type:'warning', label:'Frais Cachés', desc:'Prix affiché hors frais.'}); }
     
@@ -203,14 +252,14 @@ const analyzeFinancial = (cleanText, headerPrice) => {
     return {scoreMod:s, flags:f};
 };
 
-const analyzeMechanical = (cleanText) => {
+const analyzeMechanical = (cleanText) => { /* ... (Logic intacte) ... */
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
     if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde (Berceau)", desc:"Changement de berceau = Choc antérieur ou corrosion."}); }
     if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
     return {scoreMod:s, flags:f};
 };
 
-const investigateCompany = async (rawSiren) => {
+const investigateCompany = async (rawSiren) => { /* ... (Logic intacte) ... */
     if (!rawSiren) return null;
     const siren = rawSiren.replace(/\D/g, ''); if (siren.length !== 9) return null;
     try {
@@ -236,14 +285,10 @@ const investigateCompany = async (rawSiren) => {
     } catch { return "ERROR_NETWORK"; }
 };
 
-// --- 4. ROUTE PRINCIPALE (BLINDÉE CONTRE LES ERREURS 500) ---
+// --- 4. ROUTE PRINCIPALE API (Avec Logique de Prix IA) ---
 app.post('/api/scan/auto', async (req, res) => {
     try {
-        console.log("Reçu :", req.body); // Log pour debugger
-
-        // ⚠️ C'EST ICI LE CORRECTIF MAGIQUE "ANTI-CRASH" ⚠️
-        // On définit des valeurs par défaut pour TOUT. 
-        // Comme ça, req.body peut être vide, ça ne plantera pas.
+        // Anti-crash: Valeurs par défaut pour prévenir les erreurs 500
         const { 
             description = "", 
             autoviza = "", 
@@ -274,11 +319,45 @@ app.post('/api/scan/auto', async (req, res) => {
             positives.push({ label: "Rapport Analysé", desc: "Cohérent." });
         }
 
-        // B. ANALYSES AVANCÉES
+        // --- DONNÉES ESSENTIELLES POUR L'IA ---
+        const detectedModel = extractPreciseModel(description);
+        const extractedKm = extractMileage(description);
+        
+        // --- B. ANALYSES AVANCÉES ---
         const scriptAnalysis = analyzeScripts(cleanDescription);
         score += scriptAnalysis.scoreMod;
         report = [...report, ...scriptAnalysis.flags];
 
+        // NOUVELLE ANALYSE PRIX IA
+        const estimationIA = await estimerPrixIA(detectedModel, extractedYear, extractedKm);
+        
+        if (estimationIA && estimationIA.prix_estime) {
+            const prixIA = estimationIA.prix_estime;
+            const diff = Math.abs(extractedPrice - prixIA);
+            const percentDiff = diff / prixIA;
+
+            if (percentDiff > 0.35) { // Si écart > 35%
+                score += 40;
+                if (extractedPrice < prixIA) {
+                    report.push({
+                        type: 'danger', 
+                        label: "Prix Anormalement Bas (IA)", 
+                        desc: `Estimation marché : ~${Math.round(prixIA)}€. Prix affiché : ${extractedPrice}€. Écart de ${Math.round(percentDiff*100)}%.`
+                    });
+                } else {
+                    report.push({
+                        type: 'warning', 
+                        label: "Prix Anormalement Haut (IA)", 
+                        desc: `Prix > Estimation marché (~${Math.round(prixIA)}€).`
+                    });
+                }
+            } else {
+                positives.push({label:"Prix Validé (IA)", desc:`Conforme à l'estimation (~${Math.round(prixIA)}€).`});
+            }
+        } else {
+             report.push({type:'info', label:"Prix Non Estimé", desc:"Estimation IA indisponible (Serveur Python en veille ou données manquantes)."});
+        }
+        
         if (consistency.valid || !autoviza) {
             const relAnalysis = analyzeReliability(cleanDescription, extractedYear);
             score += relAnalysis.scoreMod;
@@ -330,18 +409,17 @@ app.post('/api/scan/auto', async (req, res) => {
 
         if (extractedPrice && extractedYear) {
             let minPrice = extractedYear >= 2015 ? 5000 : 2000;
-            if (extractedPrice < minPrice * 0.7) { score += 45; report.push({ type: 'warning', label: "Prix Suspect", desc: "Très bas." }); }
-            else { score -= 10; positives.push({ label: "Prix Cohérent", desc: "Moyenne OK." }); }
+            if (extractedPrice < minPrice * 0.7 && !estimationIA) { // Ancien check si l'IA n'est pas disponible
+                score += 45; report.push({ type: 'warning', label: "Prix Suspect (Bas)", desc: "Très bas par rapport à la moyenne." });
+            }
         }
 
         score = Math.min(Math.max(score, 0), 100);
         const verdict = score >= 80 ? "DANGER" : score > 40 ? "SUSPECT" : "FIABLE";
 
-        // Envoi de la réponse JSON
         res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro, accountAgeRisk });
 
     } catch (error) {
-        // En cas de gros crash imprévu, on renvoie une erreur propre au lieu de rien du tout
         console.error("ERREUR FATALE:", error);
         res.status(500).json({ error: "Erreur serveur interne", message: error.message });
     }

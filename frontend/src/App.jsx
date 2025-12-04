@@ -6,7 +6,7 @@ import {
   Database
 } from 'lucide-react';
 
-// ✅ URL CORRIGÉE (Celle qui marche selon ton screenshot)
+// ✅ URL CORRIGÉE FINALE
 const API_URL = "https://lefauxcoin.onrender.com";
 
 const ScamScanner = () => {
@@ -46,7 +46,7 @@ const ScamScanner = () => {
     setDetectedFields(newDetected);
   };
 
-  // --- FONCTION DE SCAN AVEC RETRY (Spécial Render Gratuit) ---
+  // --- LOGIQUE DE SCAN AVEC RETRY (Spécial Render Gratuit) ---
   const launchScan = async () => {
     if (!scanData.description && !scanData.siren && !scanData.autoviza) return alert("Collez au moins l'annonce.");
     
@@ -61,7 +61,7 @@ const ScamScanner = () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(scanData),
-                signal: AbortSignal.timeout(45000) // 45s max
+                signal: AbortSignal.timeout(45000)
             });
 
             if (!response.ok) {
@@ -85,7 +85,6 @@ const ScamScanner = () => {
     try {
         const data = await tryFetch(); 
         
-        // Sécurité si le backend renvoie une erreur interne formatée
         if(data.verdict === "ERREUR") throw new Error("Erreur interne du serveur d'analyse.");
 
         const trustScore = 100 - data.score;
