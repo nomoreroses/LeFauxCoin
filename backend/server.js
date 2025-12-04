@@ -6,37 +6,29 @@ const https = require('https');
 const app = express();
 const PORT = 5000;
 
-// --- CONFIGURATION CORS (MODIFIÉE POUR NODE v22+) ---
-const allowedOrigins = [
-  'https://le-faux-coin.vercel.app', // Ton site en production
-  'http://localhost:5173',           // Ton site local (Vite)
-  'http://localhost:3000'            // Autre port local possible
-];
-
+// --- 1. CONFIGURATION CORS "PORTES OUVERTES" ---
+// On autorise tout le monde (*) pour être sûr que Vercel passe.
+// On supprime la ligne 'app.options' qui faisait planter Node 22.
+// Le middleware cors() gère tout automatiquement s'il est placé ici.
 app.use(cors({
-  origin: function (origin, callback) {
-    // Autoriser les requêtes sans origine (comme Postman ou curl)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'La politique CORS de ce site ne permet pas l\'accès depuis cette origine.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+    origin: '*', 
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// --- CORRECTIF DU BUG "PathError" ---
-// Au lieu de '*', on utilise une Regex /.*/ pour accepter toutes les routes.
-// Cela corrige l'erreur "Missing parameter name at index 1" sur Node 22.
-app.options(/.* /, cors()); 
 
 app.use(bodyParser.json());
 
-// --- 1. KNOWLEDGE BASE ---
+// --- 2. PAGE D'ACCUEIL (Pour vérifier que le serveur marche) ---
+// Ceci permet d'éviter le "Not Found" quand tu ouvres le lien dans le navigateur
+app.get('/', (req, res) => {
+    res.send(`
+        <h1 style="font-family:sans-serif; color: green;">✅ L'API LeFauxCoin est EN LIGNE !</h1>
+        <p style="font-family:sans-serif;">Le serveur fonctionne correctement.</p>
+        <p style="font-family:sans-serif;">Pour l'utiliser, fais une requête <strong>POST</strong> sur <code>/api/scan/auto</code> depuis ton site.</p>
+    `);
+});
+
+// --- 3. KNOWLEDGE BASE ---
 const CAR_KNOWLEDGE_DB = [
     { id: "laguna2", keywords: ["laguna"], badYears: [2001, 2002, 2003], msg: "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes." },
     { id: "scenic2", keywords: ["scenic", "scénic", "megane", "mégane"], badYears: [2003, 2004, 2005], msg: "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006." },
@@ -56,7 +48,7 @@ const SCAM_SCRIPTS_DB = [
     { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
 ];
 
-// --- 2. UTILITIES ---
+// --- 4. UTILITIES ---
 const nodeRequest = (url) => {
     return new Promise((resolve, reject) => {
         const req = https.get(url, (res) => {
@@ -104,7 +96,7 @@ const extractPreciseModel = (text) => {
     return null;
 };
 
-// --- 3. ANALYSES ---
+// --- 5. ANALYSES ---
 
 const analyzeScripts = (text) => {
     let flags = []; let scoreMod = 0;
@@ -248,7 +240,7 @@ const investigateCompany = async (rawSiren) => {
     } catch { return "ERROR_NETWORK"; }
 };
 
-// --- ROUTE PRINCIPALE ---
+// --- ROUTE PRINCIPALE API ---
 app.post('/api/scan/auto', async (req, res) => {
     const { description, autoviza, siren, extractedPrice, extractedYear, accountYear } = req.body;
     const cleanDescription = extractMainDescription(description);
