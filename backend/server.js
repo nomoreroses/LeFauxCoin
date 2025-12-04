@@ -6,11 +6,11 @@ const https = require('https');
 const app = express();
 const PORT = 5000;
 
-// --- CONFIGURATION CORS CORRIGÉE ---
+// --- CONFIGURATION CORS (MODIFIÉE POUR NODE v22+) ---
 const allowedOrigins = [
-  'https://le-faux-coin.vercel.app', // Ton site en production (Vercel)
-  'http://localhost:5173',           // Développement local (Vite)
-  'http://localhost:3000'            // Développement local (React standard)
+  'https://le-faux-coin.vercel.app', // Ton site en production
+  'http://localhost:5173',           // Ton site local (Vite)
+  'http://localhost:3000'            // Autre port local possible
 ];
 
 app.use(cors({
@@ -29,8 +29,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Gérer explicitement les requêtes préliminaires (Preflight)
-app.options('*', cors()); 
+// --- CORRECTIF DU BUG "PathError" ---
+// Au lieu de '*', on utilise une Regex /.*/ pour accepter toutes les routes.
+// Cela corrige l'erreur "Missing parameter name at index 1" sur Node 22.
+app.options(/.* /, cors()); 
 
 app.use(bodyParser.json());
 
