@@ -15,27 +15,116 @@ app.use(cors({
 app.use(bodyParser.json());
 
 app.get('/', (req, res) => {
-    res.send('✅ API LeFauxCoin est EN LIGNE.');
+    res.send('✅ API LeFauxCoin "Expert Argus" est EN LIGNE.');
 });
 
-// --- 1. KNOWLEDGE BASE ---
+// --- 1. KNOWLEDGE BASE (ENRICHIE AVEC VOTRE PDF) ---
 const CAR_KNOWLEDGE_DB = [
-    { id: "laguna2", keywords: ["laguna"], badYears: [2001, 2002, 2003], msg: "🚨 MODÈLE À FUIR (LAGUNA 2) : Pannes turbo & électronique fréquentes." },
-    { id: "scenic2", keywords: ["scenic", "scénic", "megane", "mégane"], badYears: [2003, 2004, 2005], msg: "⚠️ ANNÉE À RISQUE (SCENIC 2) : Compteur digital & injection fragiles avant 2006." },
-    { id: "espace4", keywords: ["espace"], badYears: [2002, 2003, 2004, 2005, 2006], engines: ["2.2", "3.0", "dci"], msg: "⛔️ DANGER MOTEUR (ESPACE 4) : Les 2.2 et 3.0 dCi sont très fragiles (bielle)." },
-    { id: "307", keywords: ["307"], badYears: [2001, 2002, 2003, 2004, 2005], msg: "⚠️ PEUGEOT 307 (PHASE 1) : Soucis électroniques (COM2000) et volant moteur." },
-    { id: "prince", keywords: ["207", "308", "mini", "cooper", "ds3"], badYears: [2007, 2008, 2009, 2010, 2011], engines: ["vti", "thp", "150", "156", "175"], msg: "⛔️ MOTEUR 'PRINCE' (THP/VTi) : Consommation d'huile & chaîne de distribution." },
-    { id: "tdi140", keywords: ["golf", "a3", "touran", "leon"], badYears: [2003, 2004, 2005], engines: ["140", "tdi", "2.0"], msg: "⛔️ CULASSE POREUSE (TDI 140) : Consommation de liquide de refroidissement." },
-    { id: "c3", keywords: ["c3"], badYears: [2002, 2003], msg: "⚠️ FRAGILITÉ (C3) : Ressorts d'amortisseurs cassants." }
+    // --- GROUP PSA (PEUGEOT / CITROËN / DS / OPEL) ---
+    { 
+        id: "puretech", 
+        keywords: ["puretech", "1.2", "vti", "82", "110", "130"], 
+        badYears: [2013, 2014, 2015, 2016, 2017, 2018], 
+        msg: "🚨 MOTEUR PURETECH (1.0/1.2) : Risque critique de dégradation de la courroie de distribution (bouchage crépine huile). Vérifiez impérativement si la courroie a été changée récemment." 
+    },
+    { 
+        id: "bluehdi15", 
+        keywords: ["1.5", "bluehdi", "hdi"], 
+        badYears: [2017, 2018, 2019, 2020], 
+        msg: "⚠️ 1.5 BlueHDi : Fragilité de la chaîne d'arbre à cames (bruit/casse) et défaillance fréquente du réservoir d'AdBlue (cristallisation)." 
+    },
+    { 
+        id: "bmp6", 
+        keywords: ["bmp6", "etg6", "robotise", "robotisée"], 
+        msg: "⚠️ BOÎTE BMP6/ETG6 : Boîte lente et sujette aux à-coups. Usure prématurée de l'embrayage et de la butée." 
+    },
+    { 
+        id: "thp", 
+        keywords: ["thp", "150", "156", "175", "200", "gti"], 
+        badYears: [2007, 2008, 2009, 2010, 2011, 2012], 
+        msg: "⛔️ MOTEUR PRINCE (1.6 THP) : Distribution très fragile (décalage chaîne) et consommation d'huile excessive." 
+    },
+    { 
+        id: "picasso_air", 
+        keywords: ["picasso", "c4"], 
+        msg: "ℹ️ C4 PICASSO : Vérifiez les boudins de suspension pneumatique arrière (fuites fréquentes)." 
+    },
+
+    // --- RENAULT / DACIA / NISSAN ---
+    { 
+        id: "tce12", 
+        keywords: ["1.2", "tce", "dig-t", "115", "120", "125", "130"], 
+        badYears: [2012, 2013, 2014, 2015, 2016], 
+        msg: "⛔️ MOTEUR 1.2 TCe (2012-2016) : ALERTE ROUGE. Risque majeur de surconsommation d'huile menant à la casse moteur (Défaut de conception segmentation)." 
+    },
+    { 
+        id: "dci_coussinets", 
+        keywords: ["1.5", "dci", "1.9", "dci"], 
+        badYears: [2006, 2007, 2008], 
+        msg: "⚠️ 1.5/1.9 dCi (Anciens) : Risque de coulure de bielles (coussinets). Vérifiez si le moteur claque." 
+    },
+    { 
+        id: "rlink", 
+        keywords: ["scenic", "megane", "talisman", "espace"], 
+        badYears: [2015, 2016, 2017], 
+        msg: "ℹ️ ÉLECTRONIQUE : Nombreux bugs du système R-Link 2 (écran noir, clim, radio) sur les modèles 2015-2017." 
+    },
+
+    // --- BMW / MINI ---
+    { 
+        id: "n47", 
+        keywords: ["116d", "118d", "120d", "318d", "320d", "x1", "x3", "n47", "2.0"], 
+        badYears: [2007, 2008, 2009, 2010, 2011, 2012, 2013], 
+        msg: "🚨 DIESEL BMW N47 : Fragilité connue de la chaîne de distribution (située à l'arrière). Un bruit de cigale annonce une casse moteur imminente." 
+    },
+    { 
+        id: "n20", 
+        keywords: ["20i", "28i", "essence"], 
+        badYears: [2011, 2012, 2013, 2014, 2015], 
+        msg: "⚠️ ESSENCE BMW (N20) : Problèmes de guide de chaîne de distribution et pompe à huile." 
+    },
+
+    // --- AUDI / VW / SEAT / SKODA ---
+    { 
+        id: "tfsi_oil", 
+        keywords: ["1.8", "2.0", "tfsi", "tsi"], 
+        badYears: [2008, 2009, 2010, 2011, 2012], 
+        msg: "⚠️ 1.8/2.0 TFSI/TSI : Grave défaut de segmentation entraînant une surconsommation d'huile massive (1L/1000km)." 
+    },
+    { 
+        id: "stronic", 
+        keywords: ["s-tronic", "stronic", "dsg", "dsg7", "dq200"], 
+        msg: "⚠️ BOÎTE DSG7/S-Tronic (DQ200) : Usure prématurée du double embrayage et défaillance de la mécatronique." 
+    },
+    { 
+        id: "tdi_pompe", 
+        keywords: ["tdi", "1.6", "2.0"], 
+        badYears: [2013, 2014, 2015, 2016], 
+        msg: "ℹ️ TDI (EA288) : Défaillances fréquentes de la pompe à eau (surchauffe) et du radiateur de vanne EGR." 
+    },
+
+    // --- FIAT / ALFA ---
+    { 
+        id: "mjt13", 
+        keywords: ["1.3", "mjt", "multijet", "jtdm"], 
+        msg: "⚠️ 1.3 MultiJet/JTDm : Chaîne de distribution qui se détend (bruit à froid) et injecteurs fragiles. Attention à la dilution de l'huile (FAP)." 
+    },
+    { 
+        id: "twinair", 
+        keywords: ["0.9", "twinair"], 
+        msg: "ℹ️ 0.9 TwinAir : Volant moteur bi-masse fragile et turbo capricieux sur les premiers modèles." 
+    }
 ];
 
 const SCAM_SCRIPTS_DB = [
     { pattern: /très propre intérieur et extérieur aucun frais à prévoir aucun bosses ou rayures/i, label: "SCRIPT CONNU (Arnaque)", desc: "Texte utilisé massivement avec la faute 'aucun bosses'." },
-    { pattern: /véhicule roule tous les jours parcours toute distance/i, label: "PHRASE GÉNÉRIQUE", desc: "Formule type pour rassurer." },
-    { pattern: /curieux s'abstenir/i, label: "VENDEUR AGRESSIF", desc: "Décourage les questions." },
-    { pattern: /pas de mail ni de sms/i, label: "CONTACT SUSPECT", desc: "Refus de traces écrites." },
-    { pattern: /prix ferme et définitif/i, label: "PRIX SUSPECT", desc: "Vente forcée." },
-    { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
+    { pattern: /véhicule roule tous les jours parcours toute distance/i, label: "PHRASE GÉNÉRIQUE", desc: "Formule type pour rassurer, souvent copiée-collée." },
+    { pattern: /curieux s'abstenir/i, label: "VENDEUR AGRESSIF", desc: "Décourage les questions légitimes." },
+    { pattern: /pas de mail ni de sms/i, label: "CONTACT SUSPECT", desc: "Refus de traces écrites, privilégie l'oral pour ne pas laisser de preuves." },
+    { pattern: /prix ferme et définitif/i, label: "PRIX SUSPECT", desc: "Tente d'imposer une vente rapide sans discussion." },
+    { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque classique aux frais de transport (Faux don)." },
+    { pattern: /western union|mandat cash|pcs|toneo/i, label: "PAIEMENT ILLÉGAL", desc: "Moyens de paiement non traçables = Arnaque 100%." },
+    { pattern: /chèque de banque (?:certifié|vérifié) le (?:samedi|dimanche)/i, label: "ARNAQUE CHÈQUE", desc: "Demande de chèque le week-end quand les banques sont fermées." }
 ];
 
 // --- 2. UTILITIES ---
@@ -51,7 +140,7 @@ const hasNegativeContext = (text, keyword, windowSize = 30) => {
     if (index === -1) return false;
     const start = Math.max(0, index - windowSize);
     const contextBefore = lowerText.substring(start, index);
-    const negations = ["pas de ", "aucun ", "sans ", "0 ", "ni ", "jamais ", "non "];
+    const negations = ["pas de ", "aucun ", "sans ", "0 ", "ni ", "jamais ", "non ", "ne "];
     return negations.some(neg => contextBefore.includes(neg));
 };
 
@@ -70,15 +159,34 @@ const extractMainDescription = (fullText) => {
 
 const extractPreciseModel = (text) => {
     if (!text) return null;
+    const t = text.toLowerCase();
+    // Liste simplifiée pour le matching de l'IA prix
+    if (t.includes("clio")) return "clio";
+    if (t.includes("208")) return "208";
+    if (t.includes("c3")) return "c3";
+    if (t.includes("golf")) return "golf";
+    if (t.includes("polo")) return "polo";
+    if (t.includes("308")) return "308";
+    if (t.includes("megane") || t.includes("mégane")) return "megane";
+    if (t.includes("captur")) return "captur";
+    if (t.includes("2008")) return "2008";
+    if (t.includes("duster")) return "duster";
+    if (t.includes("sandero")) return "sandero";
+    if (t.includes("twingo")) return "twingo";
+    if (t.includes("500") && !t.includes("5008") && !t.includes("500x")) return "500";
+    if (t.includes("a3")) return "a3";
+    if (t.includes("serie 1") || t.includes("série 1")) return "serie 1";
+    if (t.includes("qashqai")) return "qashqai";
+    if (t.includes("yaris")) return "yaris";
+    if (t.includes("fiesta")) return "fiesta";
+    
+    // Fallback sur regex
     const structureMatch = text.match(/Modèle[\s\n]+([a-zA-Z0-9éè]+)/i);
     if (structureMatch && structureMatch[1]) return structureMatch[1].toLowerCase();
-    const title = text.substring(0, 100).toLowerCase();
-    const allKeywords = [...new Set(CAR_KNOWLEDGE_DB.flatMap(k => k.keywords)), "twingo", "clio", "golf", "polo", "c3", "c4", "206", "207", "208", "aygo", "yaris"];
-    for (const m of allKeywords) { if (title.includes(m)) return m; }
+    
     return null;
 };
 
-// Extraction KM
 const extractMileage = (text) => {
     if (!text) return 150000;
     const kmMatch = text.match(/(\d{2,3})[\s.]?(\d{3})\s*(?:km|kms|kilom[eè]tre)/i) || text.match(/(\d{4,6})\s*(?:km|kms|kilom[eè]tre)/i);
@@ -90,8 +198,7 @@ const extractMileage = (text) => {
     return 150000;
 };
 
-// Appel API Python (AVEC TIMEOUT AUGMENTÉ À 60s)
-const nodeRequest = (url) => { /* Utile pour SIREN uniquement */
+const nodeRequest = (url) => {
     return new Promise((resolve, reject) => {
         const req = https.get(url, (res) => {
             let data = ''; res.on('data', c => data += c);
@@ -116,7 +223,7 @@ const estimerPrixIA = (modele, annee, km) => {
                 'Content-Type': 'application/json',
                 'Content-Length': postData.length,
             },
-            timeout: 60000, // <--- MODIFICATION ICI : 60 SECONDES D'ATTENTE
+            timeout: 60000, // 60s pour le Cold Start
         };
 
         const req = https.request(options, (res) => {
@@ -127,15 +234,14 @@ const estimerPrixIA = (modele, annee, km) => {
             });
         });
 
-        // Gestion explicite du Timeout
         req.on('timeout', () => {
-            console.error("API Price Timeout (60s)");
+            console.error("API Price Timeout");
             req.destroy();
             resolve(null);
         });
 
         req.on('error', (e) => {
-            console.error(`API Price Network Error: ${e.message}`);
+            console.error(`API Price Error: ${e.message}`);
             resolve(null);
         });
 
@@ -144,6 +250,7 @@ const estimerPrixIA = (modele, annee, km) => {
 };
 
 // --- 3. ANALYSES ---
+
 const analyzeScripts = (text) => { 
     if (!text) return { scoreMod: 0, flags: [] };
     let flags = []; let scoreMod = 0;
@@ -185,13 +292,29 @@ const checkConsistency = (adText, reportText, adYear) => {
 const analyzeReliability = (adText, year) => {
     let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
     if (!year) return { scoreMod, flags };
-    const detectedModel = extractPreciseModel(adText);
-    if (!detectedModel) return { scoreMod, flags };
-    const entry = CAR_KNOWLEDGE_DB.find(e => e.keywords.includes(detectedModel));
-    if (entry && entry.badYears.includes(year)) {
-        let engineMatch = true;
-        if (entry.engines) engineMatch = entry.engines.some(e => cleanAd.includes(e));
-        if (engineMatch) { scoreMod += 30; flags.push({ type: 'warning', label: "Modèle à Risque", desc: entry.msg }); }
+    const detectedModel = extractPreciseModel(adText) || "";
+    
+    for (const entry of CAR_KNOWLEDGE_DB) {
+        // 1. Vérifier si l'année correspond aux années à risques
+        let yearMatch = false;
+        if (entry.badYears) {
+             if (entry.badYears.includes(year)) yearMatch = true;
+        } else {
+             yearMatch = true; // Si pas d'années spécifiées, ça s'applique tout le temps (ex: 1.2 TCe)
+        }
+
+        // 2. Vérifier les mots clés (Moteur ou Modèle)
+        const keywordMatch = entry.keywords.some(k => cleanAd.includes(k));
+
+        if (yearMatch && keywordMatch) {
+            // Filtre spécial pour PureTech: on ne flag pas si la courroie a été changée
+            if (entry.id === 'puretech' && (cleanAd.includes("courroie faite") || cleanAd.includes("distribution faite"))) {
+                continue; 
+            }
+
+            scoreMod += 35; 
+            flags.push({ type: 'warning', label: "Fiabilité Modèle/Moteur", desc: entry.msg });
+        }
     }
     return { scoreMod, flags };
 };
@@ -238,6 +361,7 @@ const analyzeMechanical = (cleanText) => {
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
     if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde", desc:"Changement de berceau."}); }
     if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
+    if (a.includes("moteur hs") || a.includes("en l'état")) { s+=100; f.push({type:'danger', label:"Véhicule Non Roulant", desc:"Vendu pour pièces ou HS."}); }
     return {scoreMod:s, flags:f};
 };
 
@@ -292,15 +416,16 @@ app.post('/api/scan/auto', async (req, res) => {
             positives.push({ label: "Rapport Analysé", desc: "Cohérent." });
         }
 
-        // --- B. ANALYSES AVANCÉES & PRIX IA ---
+        // --- DONNÉES CLÉS ---
         const detectedModel = extractPreciseModel(description);
         const extractedKm = extractMileage(description);
         
+        // --- B. ANALYSES ---
         const scriptAnalysis = analyzeScripts(cleanDescription);
         score += scriptAnalysis.scoreMod;
         report = [...report, ...scriptAnalysis.flags];
 
-        // APPEL IA (Peut prendre du temps)
+        // PRIX IA
         const estimationIA = await estimerPrixIA(detectedModel, extractedYear, extractedKm);
         
         if (estimationIA && estimationIA.prix_estime) {
@@ -319,7 +444,7 @@ app.post('/api/scan/auto', async (req, res) => {
                 positives.push({label:"Prix Validé (IA)", desc:`Conforme (~${Math.round(prixIA)}€).`});
             }
         } else {
-             report.push({type:'info', label:"Prix Non Estimé", desc:"Estimation IA indisponible (Délai d'attente dépassé ou données manquantes)."});
+             report.push({type:'info', label:"Prix Non Estimé", desc:"Estimation IA indisponible."});
         }
         
         if (consistency.valid || !autoviza) {
