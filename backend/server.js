@@ -6,7 +6,32 @@ const https = require('https');
 const app = express();
 const PORT = 5000;
 
-app.use(cors());
+// --- CONFIGURATION CORS CORRIGÉE ---
+const allowedOrigins = [
+  'https://le-faux-coin.vercel.app', // Ton site en production (Vercel)
+  'http://localhost:5173',           // Développement local (Vite)
+  'http://localhost:3000'            // Développement local (React standard)
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Autoriser les requêtes sans origine (comme Postman ou curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'La politique CORS de ce site ne permet pas l\'accès depuis cette origine.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+// Gérer explicitement les requêtes préliminaires (Preflight)
+app.options('*', cors()); 
+
 app.use(bodyParser.json());
 
 // --- 1. KNOWLEDGE BASE ---
@@ -311,4 +336,4 @@ app.post('/api/scan/auto', async (req, res) => {
     res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro, accountAgeRisk });
 });
 
-app.listen(PORT, () => console.log(`✅ Serveur FINAL prêt`));
+app.listen(PORT, () => console.log(`✅ Serveur FINAL prêt sur le port ${PORT}`));
