@@ -111,12 +111,22 @@ const ScamScanner = () => {
       return { label: "CONFIANCE", sub: "Annonce saine.", color: "bg-emerald-500", textColor: "text-emerald-500", icon: <CheckCircle className="w-12 h-12 text-white/90"/> };
   };
 
-  if (loading) return (
+if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
-      <h2 className="text-2xl font-bold text-slate-800">Analyse en cours...</h2>
-      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données via le serveur...</p>
-      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Si le serveur est en veille, cela peut prendre jusqu'à 30 secondes.</p>
+      
+      <h2 className="text-2xl font-bold text-slate-800 animate-pulse">Analyse Approfondie...</h2>
+      
+      <div className="mt-6 max-w-md bg-white p-4 rounded-xl border border-indigo-100 shadow-sm">
+        <p className="text-slate-600 font-medium mb-2">🚀 L'IA démarre ses moteurs...</p>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Nous utilisons des serveurs sécurisés qui se mettent en veille pour économiser l'énergie.
+          <br/><br/>
+          <strong className="text-indigo-600">Le premier scan peut prendre jusqu'à 60 secondes.</strong>
+          <br/>
+          Merci de votre patience, les suivants seront instantanés !
+        </p>
+      </div>
     </div>
   );
 

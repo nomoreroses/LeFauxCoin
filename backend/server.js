@@ -6,7 +6,7 @@ const https = require('https');
 const app = express();
 const PORT = 5000;
 
-// --- 0. SÉCURITÉ CORS & CONFIGURATION ---
+// --- 0. SÉCURITÉ CORS ---
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -15,7 +15,7 @@ app.use(cors({
 app.use(bodyParser.json());
 
 app.get('/', (req, res) => {
-    res.send('✅ API LeFauxCoin est EN LIGNE et prête.');
+    res.send('✅ API LeFauxCoin est EN LIGNE.');
 });
 
 // --- 1. KNOWLEDGE BASE ---
@@ -38,17 +38,7 @@ const SCAM_SCRIPTS_DB = [
     { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque aux frais de transport." }
 ];
 
-// --- 2. UTILITIES (Ajout des fonctions pour le prix et le KM) ---
-const nodeRequest = (url) => { /* ... (Fonction complète du début) ... */
-    return new Promise((resolve, reject) => {
-        const req = https.get(url, (res) => {
-            let data = ''; res.on('data', c => data += c);
-            res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(new Error("No JSON")); } });
-        });
-        req.on('error', e => reject(e)); req.end();
-    });
-};
-
+// --- 2. UTILITIES ---
 const normalizeString = (str) => {
     if (!str) return "";
     return str.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/@/g, 'a').replace(/[^a-z0-9 ]/g, '');
@@ -88,7 +78,7 @@ const extractPreciseModel = (text) => {
     return null;
 };
 
-// NOUVELLE UTILITY : Extraction du KM pour l'IA de prix
+// Extraction KM
 const extractMileage = (text) => {
     if (!text) return 150000;
     const kmMatch = text.match(/(\d{2,3})[\s.]?(\d{3})\s*(?:km|kms|kilom[eè]tre)/i) || text.match(/(\d{4,6})\s*(?:km|kms|kilom[eè]tre)/i);
@@ -100,8 +90,16 @@ const extractMileage = (text) => {
     return 150000;
 };
 
-// NOUVELLE UTILITY : Appel à l'API Python pour l'estimation
-const PYTHON_API_URL = "https://api-prix-python.onrender.com";
+// Appel API Python (AVEC TIMEOUT AUGMENTÉ À 60s)
+const nodeRequest = (url) => { /* Utile pour SIREN uniquement */
+    return new Promise((resolve, reject) => {
+        const req = https.get(url, (res) => {
+            let data = ''; res.on('data', c => data += c);
+            res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(new Error("No JSON")); } });
+        });
+        req.on('error', e => reject(e)); req.end();
+    });
+};
 
 const estimerPrixIA = (modele, annee, km) => {
     if (!modele || !annee || !km) return null;
@@ -118,21 +116,22 @@ const estimerPrixIA = (modele, annee, km) => {
                 'Content-Type': 'application/json',
                 'Content-Length': postData.length,
             },
-            timeout: 15000,
+            timeout: 60000, // <--- MODIFICATION ICI : 60 SECONDES D'ATTENTE
         };
 
         const req = https.request(options, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => {
-                try {
-                    const result = JSON.parse(data);
-                    resolve(result);
-                } catch (e) {
-                    console.error("API Price Error: Invalid JSON response.");
-                    resolve(null);
-                }
+                try { resolve(JSON.parse(data)); } catch (e) { resolve(null); }
             });
+        });
+
+        // Gestion explicite du Timeout
+        req.on('timeout', () => {
+            console.error("API Price Timeout (60s)");
+            req.destroy();
+            resolve(null);
         });
 
         req.on('error', (e) => {
@@ -144,59 +143,46 @@ const estimerPrixIA = (modele, annee, km) => {
     });
 };
 
-// --- 3. ANALYSES (Le reste des analyses originales) ---
-const analyzeScripts = (text) => { /* ... (Logic intacte) ... */
+// --- 3. ANALYSES ---
+const analyzeScripts = (text) => { 
     if (!text) return { scoreMod: 0, flags: [] };
     let flags = []; let scoreMod = 0;
     for (const script of SCAM_SCRIPTS_DB) {
         if (script.pattern.test(text)) {
-            scoreMod += 45; 
-            flags.push({ type: 'danger', label: script.label, desc: script.desc });
+            scoreMod += 45; flags.push({ type: 'danger', label: script.label, desc: script.desc });
         }
     }
     return { scoreMod, flags };
 };
 
-const checkConsistency = (adText, reportText, adYear) => { /* ... (Logic intacte) ... */
+const checkConsistency = (adText, reportText, adYear) => {
     if (!reportText || reportText.length < 20) return { valid: true, flags: [] }; 
-    
-    let flags = [];
-    let isValid = true;
+    let flags = []; let isValid = true;
     const adModel = extractPreciseModel(adText);
     const report = reportText.toLowerCase();
 
-    // A. Check MODÈLE
-    if (adModel) {
-        if (!report.includes(adModel)) {
-            const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
-            isValid = false;
-            flags.push({ 
-                type: 'fatal', 
-                label: "Rapport Incohérent (Modèle)", 
-                desc: `Annonce pour "${adModel.toUpperCase()}" mais rapport pour "${detectedReportModel.toUpperCase()}". Rapport ignoré.` 
-            });
-            return { valid: false, flags }; 
-        }
+    if (adModel && !report.includes(adModel)) {
+        const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
+        isValid = false;
+        flags.push({ type: 'fatal', label: "Rapport Incohérent (Modèle)", desc: `Annonce "${adModel.toUpperCase()}" vs Rapport "${detectedReportModel.toUpperCase()}".` });
+        return { valid: false, flags }; 
     }
-
-    // B. Check ANNÉE
     if (adYear) {
         let reportYear = null;
         const matchDate = report.match(/mise en circulation.*?(\d{2}\/\d{2}\/)(\d{4})/i);
         const matchStrictAutoviza = reportText.match(/(\d{4})[,\s\wéû]+Mise en circulation/i);
-
         if (matchDate) reportYear = parseInt(matchDate[2]);
         else if (matchStrictAutoviza) reportYear = parseInt(matchStrictAutoviza[1]);
 
         if (reportYear && Math.abs(reportYear - adYear) > 1) { 
             isValid = false;
-            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce de ${adYear} mais rapport de ${reportYear} (Mise en circulation).` });
+            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce ${adYear} vs Rapport ${reportYear}.` });
         }
     }
     return { valid: isValid, flags };
 };
 
-const analyzeReliability = (adText, year) => { /* ... (Logic intacte) ... */
+const analyzeReliability = (adText, year) => {
     let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
     if (!year) return { scoreMod, flags };
     const detectedModel = extractPreciseModel(adText);
@@ -210,10 +196,8 @@ const analyzeReliability = (adText, year) => { /* ... (Logic intacte) ... */
     return { scoreMod, flags };
 };
 
-const analyzeHistory = (adText, autoText) => { /* ... (Logic intacte) ... */
-    const ad = (adText || "").toLowerCase(); 
-    const auto = (autoText || "").toLowerCase();
-    
+const analyzeHistory = (adText, autoText) => { 
+    const ad = (adText || "").toLowerCase(); const auto = (autoText || "").toLowerCase();
     let flags = []; let scoreMod = 0;
     const claimsFirst = /(?:1|premi[eè]re)[\s-]*main/i.test(ad);
     const blackHole = auto.includes("période sans information") || auto.includes("importation");
@@ -221,16 +205,16 @@ const analyzeHistory = (adText, autoText) => { /* ... (Logic intacte) ... */
     const count = ownersMatch ? parseInt(ownersMatch[1]) : 0;
 
     if (claimsFirst) {
-        if (count > 1) { scoreMod += 60; flags.push({ type: 'danger', label: "Mensonge 1ère Main", desc: `Rapport indique ${count} propriétaires.` }); }
-        else if (blackHole) { scoreMod += 55; flags.push({ type: 'danger', label: "Fausse 1ère Main (Import)", desc: "Véhicule importé ou historique manquant." }); }
+        if (count > 1) { scoreMod += 60; flags.push({ type: 'danger', label: "Mensonge 1ère Main", desc: `Rapport: ${count} propriétaires.` }); }
+        else if (blackHole) { scoreMod += 55; flags.push({ type: 'danger', label: "Fausse 1ère Main", desc: "Véhicule importé ou sans historique." }); }
     }
-    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Import / Trou Noir", desc: "Historique partiel. Km non garanti." }); }
+    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Import / Trou Noir", desc: "Historique partiel." }); }
     return { scoreMod, flags };
 };
 
-const analyzeFinancial = (cleanText, headerPrice) => { /* ... (Logic intacte) ... */
+const analyzeFinancial = (cleanText, headerPrice) => { 
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
-    if(a.includes("frais de dossier") && !hasNegativeContext(a, "frais de dossier")) { s+=20; f.push({type:'warning', label:'Frais Cachés', desc:'Prix affiché hors frais.'}); }
+    if(a.includes("frais de dossier") && !hasNegativeContext(a, "frais de dossier")) { s+=20; f.push({type:'warning', label:'Frais Cachés', desc:'Hors frais dossier.'}); }
     
     const textPrices = a.match(/(\d{1,3}(?:[\s.]\d{3})*)\s?€/g);
     if (textPrices && headerPrice) {
@@ -238,10 +222,8 @@ const analyzeFinancial = (cleanText, headerPrice) => { /* ... (Logic intacte) ..
             const val = parseInt(p.replace(/\D/g, ''));
             if (val > (headerPrice * 5)) return;
             if (val > 1990 && val < 2030) return;
-            
             const context = a.substring(Math.max(0, a.indexOf(p)-30), a.indexOf(p));
             if (/prévoir|facture|réparation|frais|valeur|cote/i.test(context)) return;
-
             if (val > 1000 && Math.abs(val - headerPrice) > (headerPrice * 0.2)) {
                 if (!a.includes("reprise") && !a.includes("crédit") && !a.includes("apport")) {
                     s+=50; f.push({type:'danger', label:"Prix Contradictoire", desc:`${headerPrice}€ vs ${val}€.`});
@@ -252,14 +234,14 @@ const analyzeFinancial = (cleanText, headerPrice) => { /* ... (Logic intacte) ..
     return {scoreMod:s, flags:f};
 };
 
-const analyzeMechanical = (cleanText) => { /* ... (Logic intacte) ... */
+const analyzeMechanical = (cleanText) => {
     let f=[], s=0; const a = (cleanText || "").toLowerCase();
-    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde (Berceau)", desc:"Changement de berceau = Choc antérieur ou corrosion."}); }
+    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde", desc:"Changement de berceau."}); }
     if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
     return {scoreMod:s, flags:f};
 };
 
-const investigateCompany = async (rawSiren) => { /* ... (Logic intacte) ... */
+const investigateCompany = async (rawSiren) => {
     if (!rawSiren) return null;
     const siren = rawSiren.replace(/\D/g, ''); if (siren.length !== 9) return null;
     try {
@@ -285,19 +267,10 @@ const investigateCompany = async (rawSiren) => { /* ... (Logic intacte) ... */
     } catch { return "ERROR_NETWORK"; }
 };
 
-// --- 4. ROUTE PRINCIPALE API (Avec Logique de Prix IA) ---
+// --- 4. ROUTE PRINCIPALE ---
 app.post('/api/scan/auto', async (req, res) => {
     try {
-        // Anti-crash: Valeurs par défaut pour prévenir les erreurs 500
-        const { 
-            description = "", 
-            autoviza = "", 
-            siren = "", 
-            extractedPrice = null, 
-            extractedYear = null, 
-            accountYear = null 
-        } = req.body || {}; 
-
+        const { description = "", autoviza = "", siren = "", extractedPrice = null, extractedYear = null, accountYear = null } = req.body || {}; 
         const cleanDescription = extractMainDescription(description);
 
         let score = 0;
@@ -319,16 +292,15 @@ app.post('/api/scan/auto', async (req, res) => {
             positives.push({ label: "Rapport Analysé", desc: "Cohérent." });
         }
 
-        // --- DONNÉES ESSENTIELLES POUR L'IA ---
+        // --- B. ANALYSES AVANCÉES & PRIX IA ---
         const detectedModel = extractPreciseModel(description);
         const extractedKm = extractMileage(description);
         
-        // --- B. ANALYSES AVANCÉES ---
         const scriptAnalysis = analyzeScripts(cleanDescription);
         score += scriptAnalysis.scoreMod;
         report = [...report, ...scriptAnalysis.flags];
 
-        // NOUVELLE ANALYSE PRIX IA
+        // APPEL IA (Peut prendre du temps)
         const estimationIA = await estimerPrixIA(detectedModel, extractedYear, extractedKm);
         
         if (estimationIA && estimationIA.prix_estime) {
@@ -336,26 +308,18 @@ app.post('/api/scan/auto', async (req, res) => {
             const diff = Math.abs(extractedPrice - prixIA);
             const percentDiff = diff / prixIA;
 
-            if (percentDiff > 0.35) { // Si écart > 35%
+            if (percentDiff > 0.35) {
                 score += 40;
                 if (extractedPrice < prixIA) {
-                    report.push({
-                        type: 'danger', 
-                        label: "Prix Anormalement Bas (IA)", 
-                        desc: `Estimation marché : ~${Math.round(prixIA)}€. Prix affiché : ${extractedPrice}€. Écart de ${Math.round(percentDiff*100)}%.`
-                    });
+                    report.push({ type: 'danger', label: "Prix Anormalement Bas (IA)", desc: `Estimation: ~${Math.round(prixIA)}€. Affiché: ${extractedPrice}€. Écart -${Math.round(percentDiff*100)}%.` });
                 } else {
-                    report.push({
-                        type: 'warning', 
-                        label: "Prix Anormalement Haut (IA)", 
-                        desc: `Prix > Estimation marché (~${Math.round(prixIA)}€).`
-                    });
+                    report.push({ type: 'warning', label: "Prix Élevé (IA)", desc: `Supérieur à l'estimation (~${Math.round(prixIA)}€).` });
                 }
             } else {
-                positives.push({label:"Prix Validé (IA)", desc:`Conforme à l'estimation (~${Math.round(prixIA)}€).`});
+                positives.push({label:"Prix Validé (IA)", desc:`Conforme (~${Math.round(prixIA)}€).`});
             }
         } else {
-             report.push({type:'info', label:"Prix Non Estimé", desc:"Estimation IA indisponible (Serveur Python en veille ou données manquantes)."});
+             report.push({type:'info', label:"Prix Non Estimé", desc:"Estimation IA indisponible (Délai d'attente dépassé ou données manquantes)."});
         }
         
         if (consistency.valid || !autoviza) {
@@ -397,7 +361,6 @@ app.post('/api/scan/auto', async (req, res) => {
             }
         } else { positives.push({ label: "Vendeur", desc: "Particulier" }); }
 
-        // D. COMPTE & PRIX
         if (accountYear) {
             const age = new Date().getFullYear() - accountYear;
             if (age < 1) { score += 25; accountAgeRisk = true; report.push({ type: 'warning', label: "Compte Récent", desc: "Créé cette année." }); }
@@ -407,11 +370,9 @@ app.post('/api/scan/auto', async (req, res) => {
         const text = cleanDescription.toLowerCase();
         if (text.includes("mandat cash") || text.includes("coupons pcs")) { score += 100; report.push({ type: 'danger', label: "Arnaque Paiement", desc: "Méthode illégale." }); }
 
-        if (extractedPrice && extractedYear) {
+        if (extractedPrice && extractedYear && !estimationIA) {
             let minPrice = extractedYear >= 2015 ? 5000 : 2000;
-            if (extractedPrice < minPrice * 0.7 && !estimationIA) { // Ancien check si l'IA n'est pas disponible
-                score += 45; report.push({ type: 'warning', label: "Prix Suspect (Bas)", desc: "Très bas par rapport à la moyenne." });
-            }
+            if (extractedPrice < minPrice * 0.7) { score += 45; report.push({ type: 'warning', label: "Prix Suspect", desc: "Très bas." }); }
         }
 
         score = Math.min(Math.max(score, 0), 100);
