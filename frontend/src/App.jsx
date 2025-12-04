@@ -3,10 +3,11 @@ import {
   Shield, AlertOctagon, CheckCircle, ArrowRight, ArrowLeft, X, 
   MapPin, FileWarning, ExternalLink, Sparkles, Loader2, Zap, 
   User, Building2, Calendar, Euro, History, FileText, BadgeAlert, Split, AlertTriangle,
-  Database // <--- FIXED: Added Database import here
+  Database
 } from 'lucide-react';
 
-const API_URL = "https://lefauxcoin-api.onrender.com"; // Make sure this is your live backend URL
+// L'URL de ton backend sur Render
+const API_URL = "https://lefauxcoin-api.onrender.com";
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
@@ -26,7 +27,7 @@ const ScamScanner = () => {
         const cleanSiren = sirenMatch[1].replace(/\s/g, '').substring(0, 9);
         if (cleanSiren.length === 9) { newData.siren = cleanSiren; newDetected.siren = true; }
     }
-    // Strict price regex to avoid concatenating model numbers
+    
     const priceMatch = text.match(/(?:\n|^)\s*(\d[\d\s]{1,9}?)\s?€/);
     if (priceMatch && priceMatch[1]) {
         const cleanPrice = parseInt(priceMatch[1].replace(/[\s.]/g, '').replace(',', '.'));
@@ -45,23 +46,56 @@ const ScamScanner = () => {
     setDetectedFields(newDetected);
   };
 
+  // --- NOUVELLE FONCTION DE SCAN AVEC RETRY & TIMEOUT ---
   const launchScan = async () => {
+    // 1. Validation basique
     if (!scanData.description && !scanData.siren && !scanData.autoviza) return alert("Collez au moins l'annonce.");
-    setLoading(true); setResult(null);
+    
+    setLoading(true); 
+    setResult(null);
 
+    // 2. Fonction interne pour gérer les essais multiples (si le serveur dort)
+    const tryFetch = async (retries = 2) => {
+        try {
+            // On lance la requête avec un timeout de 30 secondes
+            const response = await fetch(`${API_URL}/api/scan/auto`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(scanData),
+                signal: AbortSignal.timeout(30000) // 30s timeout max
+            });
+
+            if (!response.ok) {
+                throw new Error(`Erreur HTTP: ${response.status}`);
+            }
+            
+            return await response.json();
+
+        } catch (error) {
+            // Si c'est une erreur de Timeout (le serveur met trop de temps à se réveiller)
+            // Et qu'il nous reste des essais (retries > 0)
+            if (retries > 0 && (error.name === 'TimeoutError' || error.message.includes('Failed to fetch'))) {
+                console.log("Serveur endormi... nouvelle tentative dans 3s.");
+                await new Promise(r => setTimeout(r, 3000)); // On attend 3s
+                return tryFetch(retries - 1); // On réessaie
+            }
+            throw error; // Sinon, on abandonne et on affiche l'erreur
+        }
+    };
+
+    // 3. Exécution
     try {
-      const response = await fetch(`${API_URL}/api/scan/auto`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scanData)
-      });
-      if (!response.ok) throw new Error("Erreur serveur.");
-      const data = await response.json();
-      
-      const trustScore = 100 - data.score;
-      setResult({ ...data, trustScore });
-      
-      setLoading(false); setView('result');
+        const data = await tryFetch(); // Appel de la fonction intelligente
+        
+        const trustScore = 100 - data.score;
+        setResult({ ...data, trustScore });
+        setView('result');
+
     } catch (error) {
-      alert("Erreur : " + error.message); setLoading(false);
+        console.error(error);
+        alert("Le serveur met du temps à démarrer (Plan Gratuit Render). Veuillez réessayer dans 30 secondes.");
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -78,10 +112,11 @@ const ScamScanner = () => {
   };
 
   if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
-      <h2 className="text-2xl font-bold text-slate-800">Expertise en cours...</h2>
-      <p className="text-slate-500 mt-2 font-medium">Analyse croisée des données</p>
+      <h2 className="text-2xl font-bold text-slate-800">Analyse en cours...</h2>
+      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données (SIREN, Historique)...</p>
+      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Le serveur gratuit peut prendre jusqu'à 45 secondes pour se "réveiller" lors de la première utilisation.</p>
     </div>
   );
 
