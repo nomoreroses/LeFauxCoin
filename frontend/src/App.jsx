@@ -6,8 +6,8 @@ import {
   Database
 } from 'lucide-react';
 
-// L'URL de ton backend sur Render
-const API_URL = "https://lefauxcoin-api.onrender.com";
+// MODIFICATION ICI : On laisse vide pour utiliser le proxy Vercel défini dans vercel.json
+const API_URL = ""; 
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
@@ -46,7 +46,7 @@ const ScamScanner = () => {
     setDetectedFields(newDetected);
   };
 
-  // --- NOUVELLE FONCTION DE SCAN AVEC RETRY & TIMEOUT ---
+  // --- FONCTION DE SCAN AVEC PROXY VERCEL & RETRY ---
   const launchScan = async () => {
     // 1. Validation basique
     if (!scanData.description && !scanData.siren && !scanData.autoviza) return alert("Collez au moins l'annonce.");
@@ -57,35 +57,36 @@ const ScamScanner = () => {
     // 2. Fonction interne pour gérer les essais multiples (si le serveur dort)
     const tryFetch = async (retries = 2) => {
         try {
-            // On lance la requête avec un timeout de 30 secondes
-            const response = await fetch(`${API_URL}/api/scan/auto`, {
+            // NOTE : On appelle "/api/..." directement. Vercel fera le relais vers Render.
+            const response = await fetch(`/api/scan/auto`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(scanData),
-                signal: AbortSignal.timeout(30000) // 30s timeout max
+                signal: AbortSignal.timeout(45000) // 45s timeout (Render peut être lent au réveil)
             });
 
             if (!response.ok) {
+                // Si erreur 404, ça veut dire que le Proxy Vercel ne trouve pas la route ou Render est down
                 throw new Error(`Erreur HTTP: ${response.status}`);
             }
             
             return await response.json();
 
         } catch (error) {
-            // Si c'est une erreur de Timeout (le serveur met trop de temps à se réveiller)
-            // Et qu'il nous reste des essais (retries > 0)
-            if (retries > 0 && (error.name === 'TimeoutError' || error.message.includes('Failed to fetch'))) {
+            console.warn("Tentative échouée :", error);
+            // Si c'est une erreur réseau ou timeout, on réessaie
+            if (retries > 0) {
                 console.log("Serveur endormi... nouvelle tentative dans 3s.");
                 await new Promise(r => setTimeout(r, 3000)); // On attend 3s
                 return tryFetch(retries - 1); // On réessaie
             }
-            throw error; // Sinon, on abandonne et on affiche l'erreur
+            throw error; // Sinon, on abandonne
         }
     };
 
     // 3. Exécution
     try {
-        const data = await tryFetch(); // Appel de la fonction intelligente
+        const data = await tryFetch(); 
         
         const trustScore = 100 - data.score;
         setResult({ ...data, trustScore });
@@ -93,7 +94,7 @@ const ScamScanner = () => {
 
     } catch (error) {
         console.error(error);
-        alert("Le serveur met du temps à démarrer (Plan Gratuit Render). Veuillez réessayer dans 30 secondes.");
+        alert("Le serveur est en train de démarrer ou une erreur est survenue. Veuillez réessayer dans quelques secondes.");
     } finally {
         setLoading(false);
     }
@@ -115,8 +116,8 @@ const ScamScanner = () => {
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
       <h2 className="text-2xl font-bold text-slate-800">Analyse en cours...</h2>
-      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données (SIREN, Historique)...</p>
-      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Le serveur gratuit peut prendre jusqu'à 45 secondes pour se "réveiller" lors de la première utilisation.</p>
+      <p className="text-slate-500 mt-2 font-medium">L'IA interroge les bases de données via le serveur sécurisé...</p>
+      <p className="text-xs text-slate-400 mt-8 max-w-md">Note : Si c'est la première analyse depuis 15min, cela peut prendre jusqu'à 45 secondes.</p>
     </div>
   );
 
