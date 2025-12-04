@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 
 // MODIFICATION ICI : On laisse vide pour utiliser le proxy Vercel défini dans vercel.json
-const API_URL = ""; 
+const API_URL = "https://lefauxcoin.onrender.com";
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
