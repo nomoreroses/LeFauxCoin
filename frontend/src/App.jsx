@@ -3,11 +3,10 @@ import {
   Shield, AlertOctagon, CheckCircle, ArrowRight, ArrowLeft, X, 
   MapPin, FileWarning, ExternalLink, Sparkles, Loader2, Zap, 
   User, Building2, Calendar, Euro, History, FileText, BadgeAlert, Split, AlertTriangle,
-  Database
+  Database, TrendingUp, TrendingDown
 } from 'lucide-react';
 
-// ✅ URL CORRIGÉE FINALE
-const API_URL = "https://lefauxcoin.onrender.com";
+const API_URL = "http://localhost:5000"; // Mettez l'URL de votre serveur (ex: https://lefauxcoin.onrender.com)
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
@@ -46,54 +45,29 @@ const ScamScanner = () => {
     setDetectedFields(newDetected);
   };
 
-  // --- LOGIQUE DE SCAN AVEC RETRY (Spécial Render Gratuit) ---
   const launchScan = async () => {
     if (!scanData.description && !scanData.siren && !scanData.autoviza) return alert("Collez au moins l'annonce.");
     
     setLoading(true); 
     setResult(null);
 
-    const tryFetch = async (retries = 2) => {
-        try {
-            console.log("Tentative de connexion à:", `${API_URL}/api/scan/auto`);
-            
-            const response = await fetch(`${API_URL}/api/scan/auto`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(scanData),
-                signal: AbortSignal.timeout(45000)
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Erreur HTTP: ${response.status} - ${errorText}`);
-            }
-            
-            return await response.json();
-
-        } catch (error) {
-            console.warn("Echec tentative:", error);
-            if (retries > 0) {
-                console.log("Serveur endormi... nouvelle tentative dans 3s.");
-                await new Promise(r => setTimeout(r, 3000));
-                return tryFetch(retries - 1);
-            }
-            throw error;
-        }
-    };
-
     try {
-        const data = await tryFetch(); 
-        
-        if(data.verdict === "ERREUR") throw new Error("Erreur interne du serveur d'analyse.");
+        const response = await fetch(`${API_URL}/api/scan/auto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(scanData)
+        });
 
+        if (!response.ok) throw new Error("Erreur serveur");
+        const data = await response.json();
+        
         const trustScore = 100 - data.score;
         setResult({ ...data, trustScore });
         setView('result');
 
     } catch (error) {
         console.error(error);
-        alert(`Erreur de connexion : ${error.message}. Vérifiez votre connexion ou réessayez.`);
+        alert("Erreur de connexion au serveur.");
     } finally {
         setLoading(false);
     }
@@ -114,19 +88,7 @@ const ScamScanner = () => {
 if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
-      
       <h2 className="text-2xl font-bold text-slate-800 animate-pulse">Analyse Approfondie...</h2>
-      
-      <div className="mt-6 max-w-md bg-white p-4 rounded-xl border border-indigo-100 shadow-sm">
-        <p className="text-slate-600 font-medium mb-2">🚀 L'IA démarre ses moteurs...</p>
-        <p className="text-xs text-slate-400 leading-relaxed">
-          Nous utilisons des serveurs sécurisés qui se mettent en veille pour économiser l'énergie.
-          <br/><br/>
-          <strong className="text-indigo-600">Le premier scan peut prendre jusqu'à 60 secondes.</strong>
-          <br/>
-          Merci de votre patience, les suivants seront instantanés !
-        </p>
-      </div>
     </div>
   );
 
@@ -160,33 +122,44 @@ if (loading) return (
         {/* COLONNE DROITE : DÉTAILS */}
         <div className="lg:w-2/3 p-10 space-y-10 overflow-y-auto">
 
-            {/* FATAL ERROR (Si présente) */}
-            {fatalError && (
-                <div className="bg-red-50 rounded-[2rem] p-8 border-2 border-red-100 shadow-inner">
-                    <div className="flex items-center gap-3 mb-6 text-red-600">
-                        <Split className="w-8 h-8"/>
-                        <h2 className="text-xl font-black uppercase tracking-wide">Incohérence Critique</h2>
-                    </div>
-                    <div className="flex flex-col sm:flex-row items-center gap-6">
-                        <div className="flex-1 w-full bg-white p-4 rounded-xl border border-red-100 text-center shadow-sm">
-                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Annonce</p>
-                            <p className="text-xl font-black text-slate-800 uppercase">{scanData.description.match(/Modèle[\s\n]+([a-zA-Z0-9éè]+)/i)?.[1] || "Modèle A"}</p>
-                            <p className="text-sm font-medium text-slate-500">{scanData.extractedYear}</p>
-                        </div>
-                        <div className="p-2 bg-red-100 rounded-full text-red-500 font-bold"><X className="w-6 h-6"/></div>
-                        <div className="flex-1 w-full bg-white p-4 rounded-xl border-2 border-red-500 text-center shadow-md relative">
-                            <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">INCOHÉRENT</div>
-                            <p className="text-xs font-bold text-slate-400 uppercase mb-1">Rapport</p>
-                            <p className="text-xl font-black text-slate-800 uppercase">{scanData.autoviza.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Modèle B"}</p>
-                            <p className="text-sm font-medium text-slate-500">Non conforme</p>
-                        </div>
-                    </div>
-                    <p className="mt-6 text-sm text-red-700 font-medium text-center">{fatalError.desc}</p>
-                </div>
+            {/* BLOC ARGUS (PRIX MARCHÉ) - NOUVEAU */}
+            {result.argus && result.argus.type !== 'neutral' && (
+              <div className={`p-6 rounded-2xl border-2 shadow-sm ${
+                  result.argus.type === 'scam' ? 'bg-red-50 border-red-200 text-red-900' :
+                  result.argus.type === 'bad_deal' ? 'bg-orange-50 border-orange-200 text-orange-900' :
+                  result.argus.type === 'good_deal' ? 'bg-green-50 border-green-200 text-emerald-900' :
+                  'bg-slate-50 border-slate-200 text-slate-800'
+              }`}>
+                  <div className="flex items-center gap-3 mb-3">
+                      <div className={`p-2 rounded-full ${
+                          result.argus.type === 'scam' ? 'bg-red-100 text-red-600' :
+                          result.argus.type === 'good_deal' ? 'bg-green-100 text-green-600' :
+                          'bg-orange-100 text-orange-600'
+                      }`}>
+                          {result.argus.type === 'scam' ? <AlertOctagon className="w-6 h-6"/> : 
+                           result.argus.type === 'good_deal' ? <CheckCircle className="w-6 h-6"/> : 
+                           result.argus.type === 'bad_deal' ? <TrendingDown className="w-6 h-6"/> :
+                           <Euro className="w-6 h-6"/>}
+                      </div>
+                      <div>
+                          <h3 className="text-lg font-black uppercase tracking-tight">Analyse Prix du Marché</h3>
+                          <p className="text-xs font-bold opacity-70 uppercase">{result.argus.voiture || "Véhicule identifié"}</p>
+                      </div>
+                  </div>
+                  
+                  <p className="text-lg font-bold leading-snug mb-2">{result.argus.message}</p>
+                  
+                  {result.argus.cote_officielle && (
+                      <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/60 rounded-lg text-sm font-semibold border border-black/5">
+                          <Database className="w-4 h-4 opacity-50"/>
+                          Cote estimée : {result.argus.cote_officielle} €
+                      </div>
+                  )}
+              </div>
             )}
 
             {/* AUTRES DANGERS */}
-            {!fatalError && uniqueDetails.length > 0 && (
+            {uniqueDetails.length > 0 && (
                 <section>
                     <h3 className="text-xs font-extrabold text-red-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                         <AlertTriangle className="w-4 h-4"/> Points de Vigilance
@@ -213,34 +186,12 @@ if (loading) return (
                         <span className="text-xs font-bold text-slate-400 uppercase">Statut</span>
                         <span className={`font-bold ${result.isPro ? 'text-indigo-600' : 'text-slate-600'}`}>{result.isPro ? "Professionnel" : "Particulier"}</span>
                     </div>
-                    {result.isPro ? (
-                        <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 md:col-span-2">
-                            <div className="flex justify-between items-start mb-2"><span className="text-xs font-bold text-slate-400 uppercase">Société</span>{result.mapsLink && <a href={result.mapsLink} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-blue-600 hover:underline">Voir sur Maps ↗</a>}</div>
-                            <div className="font-bold text-gray-800 text-lg mb-1">{result.positives.find(p => p.label === "Dirigeant")?.desc || "Nom non public"}</div>
-                        </div>
-                    ) : (
-                        <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col gap-1">
-                            <span className="text-xs font-bold text-slate-400 uppercase">Compte</span>
-                            <span className="font-bold text-slate-800 text-sm">{scanData.accountYear ? `Membre depuis ${scanData.accountYear}` : "Date inconnue"}</span>
-                        </div>
-                    )}
+                    <div className="p-5 rounded-2xl bg-slate-50 border border-slate-100 flex flex-col gap-1">
+                        <span className="text-xs font-bold text-slate-400 uppercase">Ancienneté</span>
+                        <span className="font-bold text-slate-800 text-sm">{scanData.accountYear ? `Membre depuis ${scanData.accountYear}` : "Date inconnue"}</span>
+                    </div>
                 </div>
             </section>
-
-            {/* HISTORIQUE */}
-            {result.history && result.history.length > 0 && (
-                <section>
-                    <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><History className="w-4 h-4"/> Historique</h3>
-                    <div className="ml-2 pl-6 border-l-2 border-slate-200 space-y-6">
-                        {result.history.slice(0, 3).map((line, i) => (
-                            <div key={i} className="relative group">
-                                <div className={`absolute -left-[31px] top-1 w-4 h-4 rounded-full border-2 border-white shadow-md transition-transform group-hover:scale-110 ${line.includes('Ouvert') || line.includes('Actuel') ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
-                                <p className="text-sm font-medium text-slate-700 bg-slate-50 inline-block px-3 py-1 rounded-lg">{line}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-            )}
 
             {/* POSITIFS */}
             {result.positives.length > 0 && (
@@ -288,7 +239,7 @@ if (loading) return (
             
             <div className="mt-12 flex justify-center gap-8 text-slate-400 text-xs font-bold uppercase tracking-widest">
                 <span className="flex items-center gap-2"><Sparkles className="w-4 h-4"/> Analyse IA</span>
-                <span className="flex items-center gap-2"><Database className="w-4 h-4"/> Base INSEE</span>
+                <span className="flex items-center gap-2"><Database className="w-4 h-4"/> Base Argus</span>
                 <span className="flex items-center gap-2"><Shield className="w-4 h-4"/> 100% Local</span>
             </div>
         </div>
