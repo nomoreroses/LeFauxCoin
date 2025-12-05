@@ -39,13 +39,13 @@ const CAR_KNOWLEDGE_DB = [
         id: "puretech", 
         keywords: ["puretech", "1.2", "vti", "82", "110", "130"], 
         badYears: [2013, 2014, 2015, 2016, 2017, 2018], 
-        msg: "🚨 MOTEUR PURETECH (1.0/1.2) : Risque critique de courroie." 
+        msg: "🚨 MOTEUR PURETECH (1.0/1.2) : Risque critique de dégradation de la courroie de distribution (bouchage crépine huile). Vérifiez impérativement si la courroie a été changée récemment." 
     },
     { 
         id: "bluehdi15", 
         keywords: ["1.5", "bluehdi", "hdi"], 
         badYears: [2017, 2018, 2019, 2020, 2021, 2022], 
-        msg: "⚠️ MOTEUR 1.5 BLUEHDI : Fragilité chaîne arbres à cames." 
+        msg: "⚠️ MOTEUR 1.5 BLUEHDI : Fragilité connue de la chaîne d'arbres à cames (risque de casse moteur). Exigez la preuve du passage à la chaîne 8mm." 
     }
 ];
 
@@ -59,46 +59,76 @@ function extractCarDetails(text, userExtractedPrice, userExtractedYear) {
         const yearMatch = text.match(/\b(19|20)\d{2}\b/g);
         if (yearMatch) detected.annee = Math.max(...yearMatch.map(y => parseInt(y)));
     }
+
     if (!detected.prix) {
         const priceMatch = text.match(/(\d{1,3}(?:[\s.]\d{3})*)\s*(?:€|eur)/i);
         if (priceMatch) detected.prix = parseInt(priceMatch[1].replace(/[\s.]/g, ''));
     }
+
     const kmMatch = text.match(/(\d{1,3}(?:[\s.]\d{3})*)\s*(?:km|kms)/i);
     if (kmMatch) detected.km = parseInt(kmMatch[1].replace(/[\s.]/g, ''));
 
     for (let m of MARQUES_DETECTABLES) {
-        if (upperText.includes(m)) { detected.marque = m; break; }
+        if (upperText.includes(m)) {
+            detected.marque = m;
+            break;
+        }
     }
 
     if (detected.marque) {
         const modelesPossibles = [...new Set(ARGUS_DB.filter(x => x.marque === detected.marque).map(x => x.modele))];
         modelesPossibles.sort((a, b) => b.length - a.length);
+        
         for (let mod of modelesPossibles) {
-            if (upperText.includes(mod)) { detected.modele = mod; break; }
+            if (upperText.includes(mod)) {
+                detected.modele = mod;
+                break; 
+            }
         }
     }
+
     return detected;
 }
 
 function findArgusPrice(details) {
     if (!details.marque || !details.modele || !details.annee || !details.km) return null;
+
     const pas_km = 15000;
     const km_debut = Math.floor(details.km / pas_km) * pas_km;
     const km_fin = km_debut + pas_km;
     const tranche_cible = `${km_debut} - ${km_fin}`;
-    const match = ARGUS_DB.find(row => row.marque === details.marque && row.modele === details.modele && row.annee === details.annee && row.km_tranche === tranche_cible);
+
+    const match = ARGUS_DB.find(row => 
+        row.marque === details.marque &&
+        row.modele === details.modele &&
+        row.annee === details.annee &&
+        row.km_tranche === tranche_cible
+    );
+
     if (match) return { cote: match.cote, fiabilite: "Précise" };
-    const matchesLoose = ARGUS_DB.filter(row => row.marque === details.marque && row.modele === details.modele && row.annee === details.annee);
+
+    const matchesLoose = ARGUS_DB.filter(row => 
+        row.marque === details.marque &&
+        row.modele === details.modele &&
+        row.annee === details.annee
+    );
+
     if (matchesLoose.length > 0) {
         const avgCote = matchesLoose.reduce((acc, val) => acc + val.cote, 0) / matchesLoose.length;
         return { cote: Math.round(avgCote), fiabilite: "Estimée" };
     }
+
     return null;
 }
+
+app.get('/', (req, res) => {
+    res.send('✅ API LeFauxCoin "Expert Argus" est EN LIGNE.');
+});
 
 app.post('/api/scan/auto', (req, res) => {
     const { description, siren, autoviza, extractedPrice, extractedYear } = req.body;
     const text = description || "";
+    const cleanDescription = description.replace(/\s+/g, ' ').trim();
     
     let score = 0;
     let report = [];
@@ -106,24 +136,37 @@ app.post('/api/scan/auto', (req, res) => {
     let isPro = false;
     let argusAnalysis = { type: "neutral", message: "" };
     
-    // Argus
     const carDetails = extractCarDetails(text, extractedPrice, extractedYear);
+    
     if (carDetails.prix && carDetails.marque) {
         const argusData = findArgusPrice(carDetails);
         if (argusData) {
             const cote = argusData.cote;
             const diff = carDetails.prix - cote;
             const percentDiff = (diff / cote) * 100;
+            
             argusAnalysis.cote_officielle = cote;
             argusAnalysis.voiture = `${carDetails.marque} ${carDetails.modele || ''} (${carDetails.annee})`;
-            if (percentDiff < -35) { score += 60; argusAnalysis.type = "scam"; argusAnalysis.message = `🚨 PRIX BAS : ${carDetails.prix}€ vs Cote ${cote}€. -${Math.round(Math.abs(percentDiff))}% sous le marché.`; }
-            else if (percentDiff > 35) { argusAnalysis.type = "bad_deal"; argusAnalysis.message = `📉 TROP CHER : +${Math.round(percentDiff)}% au-dessus de la cote (${cote}€).`; }
-            else if (percentDiff >= -15 && percentDiff <= 15) { score -= 15; argusAnalysis.type = "good_deal"; argusAnalysis.message = `✅ PRIX JUSTE : Cohérent avec la cote (${cote}€).`; }
-            else { argusAnalysis.message = `ℹ️ Prix : ${carDetails.prix}€ (Cote: ${cote}€).`; argusAnalysis.type = "info"; }
+
+            if (percentDiff < -35) {
+                score += 60;
+                argusAnalysis.type = "scam";
+                argusAnalysis.message = `🚨 PRIX BAS : ${carDetails.prix}€ vs Cote ${cote}€. -${Math.round(Math.abs(percentDiff))}% sous le marché.`;
+            } else if (percentDiff > 35) {
+                argusAnalysis.type = "bad_deal";
+                argusAnalysis.message = `📉 TROP CHER : +${Math.round(percentDiff)}% au-dessus de la cote (${cote}€).`;
+            } else if (percentDiff >= -15 && percentDiff <= 15) {
+                score -= 15;
+                argusAnalysis.type = "good_deal";
+                argusAnalysis.message = `✅ PRIX JUSTE : Cohérent avec la cote (${cote}€).`;
+                positives.push({ label: "Prix Cohérent", desc: "Conforme au marché." });
+            } else {
+                argusAnalysis.message = `ℹ️ Prix : ${carDetails.prix}€ (Cote: ${cote}€).`;
+                argusAnalysis.type = "info";
+            }
         }
     }
 
-    // Risques Moteur
     const lowerText = text.toLowerCase();
     CAR_KNOWLEDGE_DB.forEach(risk => {
         const hasKeywords = risk.keywords.every(k => lowerText.includes(k));
@@ -133,21 +176,27 @@ app.post('/api/scan/auto', (req, res) => {
         }
     });
 
-    if (siren) { isPro = true; positives.push({ label: "Entreprise", desc: `SIREN ${siren}` }); }
-    
-    if (lowerText.includes("mandat cash") || lowerText.includes("coupons pcs")) { score += 100; report.push({ type: 'fatal', label: "FRAUDE", desc: "Paiement illégal demandé." }); }
-    
+    if (siren) {
+        isPro = true;
+        positives.push({ label: "Entreprise", desc: `SIREN ${siren}` });
+    }
+
+    if (lowerText.includes("mandat cash") || lowerText.includes("coupons pcs")) {
+        score += 100;
+        report.push({ type: 'fatal', label: "FRAUDE", desc: "Paiement illégal demandé." });
+    }
+
     score = Math.min(Math.max(score, 0), 100);
     const verdict = score >= 80 ? "DANGER" : score > 40 ? "SUSPECT" : "FIABLE";
 
-    res.json({ score, verdict, details: report, positives, isPro, argus: argusAnalysis });
+    res.json({ 
+        score, 
+        verdict, 
+        details: report, 
+        positives, 
+        isPro,
+        argus: argusAnalysis 
+    });
 });
 
 app.listen(PORT, () => console.log(`🚀 Serveur démarré sur ${PORT}`));
-```
-
-### Important : Mise à jour sur Render
-Pour que ça marche, **vous devez absolument commiter et pousser le fichier `MA_COTE_ARGUS_OFFICIELLE.csv`** sur votre dépôt GitHub lié à Render.
-Si le fichier CSV n'est pas sur GitHub, Render ne le verra pas et l'analyse de prix sera ignorée (le reste marchera).
-
-Bon déploiement ! 🚀
