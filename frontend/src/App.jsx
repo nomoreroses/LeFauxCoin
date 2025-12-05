@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Shield, AlertOctagon, CheckCircle, ArrowRight, ArrowLeft, X, 
   MapPin, FileWarning, ExternalLink, Sparkles, Loader2, Zap, 
@@ -6,15 +6,28 @@ import {
   Database, TrendingUp, TrendingDown
 } from 'lucide-react';
 
-const API_URL = "http://localhost:5000"; // Mettez l'URL de votre serveur (ex: https://lefauxcoin.onrender.com)
+// ✅ URL DE PRODUCTION (Sans le slash à la fin)
+const API_URL = "https://lefauxcoin.onrender.com"; 
 
 const ScamScanner = () => {
   const [view, setView] = useState('home'); 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
+  const [serverWakeup, setServerWakeup] = useState(false);
   
   const [detectedFields, setDetectedFields] = useState({ siren: false, price: false, year: false, member: false });
   const [scanData, setScanData] = useState({ description: '', autoviza: '', siren: '', extractedPrice: null, extractedYear: null, accountYear: null });
+
+  // Petit effet pour avertir du réveil serveur si ça traîne
+  useEffect(() => {
+    let timer;
+    if (loading) {
+        timer = setTimeout(() => setServerWakeup(true), 3000); // Si > 3s, c'est sûrement un cold start
+    } else {
+        setServerWakeup(false);
+    }
+    return () => clearTimeout(timer);
+  }, [loading]);
 
   const handleDescriptionChange = (e) => {
     const text = e.target.value;
@@ -52,22 +65,36 @@ const ScamScanner = () => {
     setResult(null);
 
     try {
+        // Timeout très long (60s) pour laisser le temps à Render de démarrer (Cold Start)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); 
+
         const response = await fetch(`${API_URL}/api/scan/auto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(scanData)
+            body: JSON.stringify(scanData),
+            signal: controller.signal
         });
 
-        if (!response.ok) throw new Error("Erreur serveur");
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            throw new Error(`Erreur serveur (${response.status})`);
+        }
+
         const data = await response.json();
         
-        const trustScore = 100 - data.score;
+        if (data.verdict === "ERREUR") throw new Error("Le serveur n'a pas pu analyser les données.");
+
+        const trustScore = 100 - (data.score || 0);
         setResult({ ...data, trustScore });
         setView('result');
 
     } catch (error) {
         console.error(error);
-        alert("Erreur de connexion au serveur.");
+        let msg = error.message;
+        if (error.name === 'AbortError') msg = "Le serveur met trop de temps à répondre (il dort peut-être ?). Réessayez.";
+        alert(`Erreur : ${msg}`);
     } finally {
         setLoading(false);
     }
@@ -88,20 +115,29 @@ const ScamScanner = () => {
 if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-900 font-sans p-4 text-center">
       <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mb-6" />
-      <h2 className="text-2xl font-bold text-slate-800 animate-pulse">Analyse Approfondie...</h2>
+      <h2 className="text-2xl font-bold text-slate-800 animate-pulse">Analyse en cours...</h2>
+      
+      {serverWakeup && (
+          <div className="mt-6 max-w-md bg-blue-50 p-4 rounded-xl border border-blue-100 animate-in fade-in slide-in-from-bottom-4 duration-700">
+              <p className="text-blue-800 font-bold text-sm mb-1">🚀 Démarrage du moteur IA...</p>
+              <p className="text-blue-600 text-xs">
+                  Le serveur gratuit se réveille. Cela peut prendre jusqu'à 30 secondes la première fois.
+                  Merci de votre patience !
+              </p>
+          </div>
+      )}
     </div>
   );
 
   if (view === 'result' && result) {
     const verdict = getVerdict(result.trustScore);
-    const uniqueDetails = result.details.filter((v,i,a)=>a.findIndex(t=>(t.label===v.label))===i);
+    const uniqueDetails = (result.details || []).filter((v,i,a)=>a.findIndex(t=>(t.label===v.label))===i);
     const fatalError = uniqueDetails.find(d => d.type === 'fatal');
 
     return (
     <div className="min-h-screen bg-slate-100 flex justify-center p-6 font-sans text-slate-900 overflow-y-auto">
       <div className="w-full max-w-5xl bg-white rounded-[2rem] shadow-2xl overflow-hidden flex flex-col lg:flex-row h-fit my-auto border border-white/60">
         
-        {/* COLONNE GAUCHE : SCOREBOARD */}
         <div className={`lg:w-1/3 p-10 flex flex-col justify-between ${verdict.color} relative overflow-hidden`}>
             <div className="relative z-10 text-center lg:text-left">
                 <div className="inline-flex p-3 bg-white/20 rounded-2xl backdrop-blur-md mb-6 shadow-inner ring-1 ring-white/30">
@@ -119,10 +155,18 @@ if (loading) return (
             </button>
         </div>
 
-        {/* COLONNE DROITE : DÉTAILS */}
         <div className="lg:w-2/3 p-10 space-y-10 overflow-y-auto">
 
-            {/* BLOC ARGUS (PRIX MARCHÉ) - NOUVEAU */}
+            {fatalError && (
+                <div className="bg-red-50 rounded-[2rem] p-8 border-2 border-red-100 shadow-inner">
+                    <div className="flex items-center gap-3 mb-6 text-red-600">
+                        <Split className="w-8 h-8"/>
+                        <h2 className="text-xl font-black uppercase tracking-wide">Alerte Critique</h2>
+                    </div>
+                    <p className="text-lg text-red-800 font-bold text-center">{fatalError.desc}</p>
+                </div>
+            )}
+
             {result.argus && result.argus.type !== 'neutral' && (
               <div className={`p-6 rounded-2xl border-2 shadow-sm ${
                   result.argus.type === 'scam' ? 'bg-red-50 border-red-200 text-red-900' :
@@ -158,8 +202,7 @@ if (loading) return (
               </div>
             )}
 
-            {/* AUTRES DANGERS */}
-            {uniqueDetails.length > 0 && (
+            {uniqueDetails.length > 0 && !fatalError && (
                 <section>
                     <h3 className="text-xs font-extrabold text-red-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                         <AlertTriangle className="w-4 h-4"/> Points de Vigilance
@@ -178,7 +221,6 @@ if (loading) return (
                 </section>
             )}
 
-            {/* IDENTITÉ */}
             <section>
                 <h3 className="text-xs font-extrabold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><User className="w-4 h-4"/> Identité du Vendeur</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -193,8 +235,7 @@ if (loading) return (
                 </div>
             </section>
 
-            {/* POSITIFS */}
-            {result.positives.length > 0 && (
+            {result.positives?.length > 0 && (
                 <section className="pt-6 border-t border-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {result.positives.filter(p => !p.label.includes("Dirigeant")).map((item, i) => (
@@ -213,7 +254,6 @@ if (loading) return (
     );
   }
 
-  // --- HOME ---
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex items-center justify-center p-4">
         <div className="w-full max-w-3xl">
