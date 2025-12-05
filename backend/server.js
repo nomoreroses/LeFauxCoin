@@ -17,18 +17,26 @@ app.use(cors({
 app.use(bodyParser.json());
 
 app.get('/', (req, res) => {
-    res.send('✅ API LeFauxCoin "Expert Argus" (Version CSV Officiel) est EN LIGNE.');
+    res.send('✅ API LeFauxCoin "Expert Argus" (Version Complete + Smart Match) est EN LIGNE.');
 });
 
-// --- 1. CHARGEMENT DU CSV "MA_COTE_ARGUS_OFFICIELLE.csv" ---
+// --- 1. UTILS ---
+const normalizeString = (str) => {
+    if (!str) return "";
+    return str.toLowerCase()
+        .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Enlève les accents
+        .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e')
+        .replace(/[^a-z0-9 ]/g, ''); // Garde les espaces pour le matching de mots
+};
+
+// --- 2. CHARGEMENT ET PARSING CSV ---
 let ARGUS_DB = [];
 
 const parseKmTranche = (tranche) => {
-    // Ex: "120000 - 135000" -> { min: 120000, max: 135000 }
     if (!tranche) return { min: 0, max: 9999999 };
     const parts = tranche.split('-').map(p => parseInt(p.replace(/\D/g, '')));
     if (parts.length === 2) return { min: parts[0], max: parts[1] };
-    if (parts.length === 1) return { min: parts[0], max: parts[0] }; // Cas rare
+    if (parts.length === 1) return { min: parts[0], max: parts[0] }; 
     return { min: 0, max: 9999999 };
 };
 
@@ -40,15 +48,11 @@ const loadArgusCSV = () => {
         if (fs.existsSync(csvPath)) {
             const content = fs.readFileSync(csvPath, 'utf8');
             const lines = content.split(/\r?\n/);
-            
-            // On saute la première ligne (Headers) si elle contient "Marque"
             const startIndex = lines[0].toLowerCase().includes('marque') ? 1 : 0;
 
             for (let i = startIndex; i < lines.length; i++) {
                 const line = lines[i].trim();
                 if (!line) continue;
-
-                // Format attendu: Marque;Modele;Annee;Km_Tranche;Energie;Boite;Cote_Moyenne;...
                 const cols = line.split(';');
                 if (cols.length < 7) continue;
 
@@ -56,15 +60,15 @@ const loadArgusCSV = () => {
 
                 ARGUS_DB.push({
                     marque: normalizeString(cols[0]),
-                    modele: normalizeString(cols[1]), // Normalisation pour recherche facile
-                    modele_raw: cols[1],             // Garder le vrai nom pour affichage
+                    modele: normalizeString(cols[1]), // Ex: "207 sw urban"
+                    modele_raw: cols[1],
                     annee: parseInt(cols[2]),
                     minKm: kmRange.min,
                     maxKm: kmRange.max,
-                    cote: parseInt(cols[6]) // Cote_Moyenne
+                    cote: parseInt(cols[6])
                 });
             }
-            console.log(`✅ ${ARGUS_DB.length} cotes chargées en mémoire.`);
+            console.log(`✅ ${ARGUS_DB.length} cotes chargées avec succès.`);
         } else {
             console.warn("⚠️ Fichier 'MA_COTE_ARGUS_OFFICIELLE.csv' introuvable !");
         }
@@ -73,17 +77,17 @@ const loadArgusCSV = () => {
     }
 };
 
-// Charge la base au démarrage
 loadArgusCSV();
 
-// --- 2. FONCTION D'ESTIMATION LOCALE ---
-const estimerPrixLocal = (modeleInput, anneeInput, kmInput) => {
+// --- 3. ESTIMATION INTELLIGENTE (Smart Match) ---
+const estimerPrixLocal = (modeleInput, anneeInput, kmInput, fullTextAd) => {
     if (!modeleInput || !anneeInput || ARGUS_DB.length === 0) return null;
     
-    const searchModel = normalizeString(modeleInput);
-    const searchKm = kmInput || 150000; // Par défaut si inconnu
+    const searchModel = normalizeString(modeleInput); // Ex: "207"
+    const searchKm = kmInput || 150000;
+    const normalizedAd = normalizeString(fullTextAd || ""); // Titre complet de l'annonce
 
-    // 1. Filtrer par Année et Modèle (match partiel autorisé sur le modèle)
+    // Étape 1 : Filtre large (Année + Modèle de base)
     let candidates = ARGUS_DB.filter(item => 
         item.annee === anneeInput && 
         (item.modele.includes(searchModel) || searchModel.includes(item.modele))
@@ -91,22 +95,38 @@ const estimerPrixLocal = (modeleInput, anneeInput, kmInput) => {
 
     if (candidates.length === 0) return null;
 
-    // 2. Trouver la bonne tranche kilométrique
-    // On cherche la tranche qui contient le kilométrage exact
-    let bestMatch = candidates.find(item => searchKm >= item.minKm && searchKm <= item.maxKm);
+    // Étape 2 : Scoring par pertinence (Smart Match)
+    candidates = candidates.map(c => {
+        const modelWords = c.modele.split(' ').filter(w => w.length > 1);
+        let score = 0;
+        modelWords.forEach(word => {
+            if (normalizedAd.includes(word)) score += 10; // +10 points par mot clé trouvé (ex: "sw")
+        });
+        
+        // Bonus si le kilométrage est DANS la tranche
+        if (searchKm >= c.minKm && searchKm <= c.maxKm) score += 5;
+        
+        // Pénalité distance kilométrage
+        const midKm = (c.minKm + c.maxKm) / 2;
+        const kmDist = Math.abs(searchKm - midKm);
+        
+        return { ...c, score, kmDist };
+    });
 
-    // Si pas de tranche exacte (ex: voiture a 200.000km et le tableau s'arrête à 150.000)
-    // On prend le plus proche (le maxKm le plus élevé ou le minKm le plus bas)
-    if (!bestMatch) {
-        candidates.sort((a, b) => Math.abs(a.minKm - searchKm) - Math.abs(b.minKm - searchKm));
-        bestMatch = candidates[0];
-    }
+    // Étape 3 : Tri
+    candidates.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.kmDist - b.kmDist;
+    });
 
-    return bestMatch ? bestMatch.cote : null;
+    const bestMatch = candidates[0];
+    console.log(`🎯 Smart Match: "${bestMatch.modele_raw}" (Score: ${bestMatch.score}) pour l'annonce "${fullTextAd.substring(0,20)}..."`);
+    
+    return bestMatch.cote;
 };
 
 
-// --- 3. KNOWLEDGE BASE COMPLETE ---
+// --- 4. KNOWLEDGE BASE COMPLETE ---
 const CAR_KNOWLEDGE_DB = [
     // --- GROUP PSA (PEUGEOT / CITROËN / DS / OPEL) ---
     { 
@@ -205,22 +225,13 @@ const CAR_KNOWLEDGE_DB = [
 ];
 
 const SCAM_SCRIPTS_DB = [
-    { pattern: /très propre intérieur et extérieur aucun frais à prévoir aucun bosses ou rayures/i, label: "SCRIPT CONNU (Arnaque)", desc: "Texte utilisé massivement avec la faute 'aucun bosses'." },
-    { pattern: /véhicule roule tous les jours parcours toute distance/i, label: "PHRASE GÉNÉRIQUE", desc: "Formule type pour rassurer, souvent copiée-collée." },
-    { pattern: /curieux s'abstenir/i, label: "VENDEUR AGRESSIF", desc: "Décourage les questions légitimes." },
-    { pattern: /pas de mail ni de sms/i, label: "CONTACT SUSPECT", desc: "Refus de traces écrites, privilégie l'oral pour ne pas laisser de preuves." },
-    { pattern: /prix ferme et définitif/i, label: "PRIX SUSPECT", desc: "Tente d'imposer une vente rapide sans discussion." },
-    { pattern: /donne contre bon soin/i, label: "ARNAQUE AU DON", desc: "Arnaque classique aux frais de transport (Faux don)." },
-    { pattern: /western union|mandat cash|pcs|toneo/i, label: "PAIEMENT ILLÉGAL", desc: "Moyens de paiement non traçables = Arnaque 100%." },
-    { pattern: /chèque de banque (?:certifié|vérifié) le (?:samedi|dimanche)/i, label: "ARNAQUE CHÈQUE", desc: "Demande de chèque le week-end quand les banques sont fermées." }
+    { pattern: /très propre intérieur et extérieur aucun frais à prévoir aucun bosses/i, label: "SCRIPT ARNAQUE", desc: "Faute 'aucun bosses' typique." },
+    { pattern: /pas de mail ni de sms/i, label: "CONTACT SUSPECT", desc: "Refus de traces écrites." },
+    { pattern: /western union|mandat cash|pcs/i, label: "PAIEMENT ILLÉGAL", desc: "Arnaque 100%." },
+    { pattern: /chèque de banque (?:certifié|vérifié) le (?:samedi|dimanche)/i, label: "ARNAQUE CHÈQUE", desc: "Demande hors jours ouvrés." }
 ];
 
-// --- UTILITIES ---
-const normalizeString = (str) => {
-    if (!str) return "";
-    return str.toLowerCase().replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/@/g, 'a').replace(/[^a-z0-9 ]/g, '');
-};
-
+// --- 5. HELPERS ---
 const hasNegativeContext = (text, keyword, windowSize = 30) => {
     if (!text) return false;
     const lowerText = text.toLowerCase();
@@ -236,12 +247,9 @@ const extractMainDescription = (fullText) => {
     if (!fullText) return "";
     let start = fullText.indexOf("Description");
     if (start === -1) start = 0;
-    const noiseMarkers = ["Ces annonces peuvent vous intéresser", "Voir plus d’annonces", "Signaler l’annonce", "Financement", "Cetelem", "Vos droits et obligations", "Les annonces de"];
+    const markers = ["Ces annonces peuvent", "Voir plus", "Signaler", "Financement"];
     let end = fullText.length;
-    for (const marker of noiseMarkers) {
-        const idx = fullText.indexOf(marker, start);
-        if (idx !== -1 && idx < end) end = idx;
-    }
+    markers.forEach(m => { const idx = fullText.indexOf(m, start); if(idx !== -1 && idx < end) end = idx; });
     return fullText.substring(start, end);
 };
 
@@ -280,24 +288,15 @@ const CAR_MODELS_DB = [
 const extractPreciseModel = (text) => {
     if (!text) return null;
     const t = text.toLowerCase();
-
-    // 1. Structure LeBonCoin
     const structureMatch = text.match(/Modèle[\s\n]+([a-zA-Z0-9éè]+)/i);
-    if (structureMatch && structureMatch[1]) {
-        return structureMatch[1].toLowerCase();
-    }
-
-    // 2. Recherche dans la liste (Triée par longueur pour éviter les conflits ex: C4 vs C4 Picasso)
+    if (structureMatch && structureMatch[1]) return structureMatch[1].toLowerCase();
     const sortedModels = CAR_MODELS_DB.sort((a, b) => b.length - a.length);
-
     for (const model of sortedModels) {
         if (t.includes(model)) {
-            // FIX SPÉCIAL : Eviter que "500" matche "5008" ou "500x"
-            if (model === "500" && (t.includes("5008") || t.includes("500x") || t.includes("500 x"))) continue;
+            if (model === "500" && (t.includes("5008") || t.includes("500x"))) continue;
             return model;
         }
     }
-    
     return null;
 };
 
@@ -312,7 +311,6 @@ const extractMileage = (text) => {
     return 150000;
 };
 
-// Fonction NodeRequest et IA (Fallback)
 const nodeRequest = (url) => {
     return new Promise((resolve, reject) => {
         const req = https.get(url, (res) => {
@@ -336,8 +334,7 @@ const estimerPrixIA = (modele, annee, km) => {
             timeout: 5000, 
         };
         const req = https.request(options, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
+            let data = ''; res.on('data', c => data += c);
             res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { resolve(null); } });
         });
         req.on('timeout', () => { req.destroy(); resolve(null); });
@@ -346,106 +343,7 @@ const estimerPrixIA = (modele, annee, km) => {
     });
 };
 
-// --- ANALYSES ---
-
-const analyzeScripts = (text) => { 
-    if (!text) return { scoreMod: 0, flags: [] };
-    let flags = []; let scoreMod = 0;
-    for (const script of SCAM_SCRIPTS_DB) {
-        if (script.pattern.test(text)) {
-            scoreMod += 45; flags.push({ type: 'danger', label: script.label, desc: script.desc });
-        }
-    }
-    return { scoreMod, flags };
-};
-
-const checkConsistency = (adText, reportText, adYear) => {
-    if (!reportText || reportText.length < 20) return { valid: true, flags: [] }; 
-    let flags = []; let isValid = true;
-    const adModel = extractPreciseModel(adText);
-    const report = reportText.toLowerCase();
-
-    if (adModel && !report.includes(adModel)) {
-        const detectedReportModel = report.match(/logo [a-z]+ ([a-z0-9]+)/i)?.[1] || "Autre";
-        if (!detectedReportModel.includes(adModel) && !adModel.includes(detectedReportModel)) {
-            isValid = false;
-            flags.push({ type: 'fatal', label: "Rapport Incohérent (Modèle)", desc: `Annonce "${adModel}" vs Rapport "${detectedReportModel}".` });
-        }
-    }
-    if (adYear) {
-        let reportYear = null;
-        const matchDate = report.match(/mise en circulation.*?(\d{2}\/\d{2}\/)(\d{4})/i);
-        const matchStrictAutoviza = reportText.match(/(\d{4})[,\s\wéû]+Mise en circulation/i);
-        if (matchDate) reportYear = parseInt(matchDate[2]);
-        else if (matchStrictAutoviza) reportYear = parseInt(matchStrictAutoviza[1]);
-
-        if (reportYear && Math.abs(reportYear - adYear) > 1) { 
-            isValid = false;
-            flags.push({ type: 'fatal', label: "Rapport Incohérent (Année)", desc: `Annonce ${adYear} vs Rapport ${reportYear}.` });
-        }
-    }
-    return { valid: isValid, flags };
-};
-
-const analyzeReliability = (adText, year) => {
-    let flags = []; let scoreMod = 0; const cleanAd = normalizeString(adText);
-    if (!year) return { scoreMod, flags };
-    
-    for (const entry of CAR_KNOWLEDGE_DB) {
-        let yearMatch = false;
-        if (entry.badYears) { if (entry.badYears.includes(year)) yearMatch = true; } else { yearMatch = true; }
-        const keywordMatch = entry.keywords.some(k => cleanAd.includes(k));
-
-        if (yearMatch && keywordMatch) {
-            if (entry.id === 'puretech' && (cleanAd.includes("courroie faite") || cleanAd.includes("distribution faite"))) continue; 
-            scoreMod += 35; 
-            flags.push({ type: 'warning', label: "Fiabilité Modèle/Moteur", desc: entry.msg });
-        }
-    }
-    return { scoreMod, flags };
-};
-
-const analyzeHistory = (adText, autoText) => { 
-    const ad = (adText || "").toLowerCase(); const auto = (autoText || "").toLowerCase();
-    let flags = []; let scoreMod = 0;
-    const claimsFirst = /(?:1|premi[eè]re)[\s-]*main/i.test(ad);
-    const blackHole = auto.includes("période sans information") || auto.includes("importation");
-    const ownersMatch = auto.match(/(\d+)\s+propriétaires/i);
-    const count = ownersMatch ? parseInt(ownersMatch[1]) : 0;
-
-    if (claimsFirst && count > 1) { scoreMod += 60; flags.push({ type: 'danger', label: "Mensonge 1ère Main", desc: `Rapport: ${count} propriétaires.` }); }
-    if (blackHole) { scoreMod += 20; flags.push({ type: 'warning', label: "Historique Incomplet", desc: "Import ou données manquantes." }); }
-    return { scoreMod, flags };
-};
-
-const analyzeFinancial = (cleanText, headerPrice) => { 
-    let f=[], s=0; const a = (cleanText || "").toLowerCase();
-    if(a.includes("frais de dossier") && !hasNegativeContext(a, "frais de dossier")) { s+=20; f.push({type:'warning', label:'Frais Cachés', desc:'Hors frais dossier.'}); }
-    
-    const textPrices = a.match(/(\d{1,3}(?:[\s.]\d{3})*)\s?€/g);
-    if (textPrices && headerPrice) {
-        textPrices.forEach(p => {
-            const val = parseInt(p.replace(/\D/g, ''));
-            if (val > (headerPrice * 5) || (val > 1990 && val < 2030)) return; 
-            if (val > 1000 && Math.abs(val - headerPrice) > (headerPrice * 0.2)) {
-                if (!a.includes("reprise") && !a.includes("crédit") && !a.includes("apport")) {
-                    s+=50; f.push({type:'danger', label:"Prix Contradictoire", desc:`${headerPrice}€ vs ${val}€.`});
-                }
-            }
-        });
-    }
-    return {scoreMod:s, flags:f};
-};
-
-const analyzeMechanical = (cleanText) => {
-    let f=[], s=0; const a = (cleanText || "").toLowerCase();
-    if (a.includes("berceau")) { s+=40; f.push({type:'warning', label:"Intervention Lourde", desc:"Changement de berceau."}); }
-    if (a.includes("joint de culasse") && !a.includes("fait")) { s+=60; f.push({type:'danger', label:"Panne Moteur", desc:"Joint de culasse à prévoir."}); }
-    if (a.includes("moteur hs") || a.includes("en l'état")) { s+=100; f.push({type:'danger', label:"Véhicule Non Roulant", desc:"Vendu pour pièces ou HS."}); }
-    return {scoreMod:s, flags:f};
-};
-
-// --- FIX SIRET (Version corrigée) ---
+// --- 6. ROUTE SCAN ---
 const investigateCompany = async (rawSiren) => {
     if (!rawSiren) return null;
     let siren = rawSiren.replace(/\D/g, '');
@@ -458,23 +356,10 @@ const investigateCompany = async (rawSiren) => {
         const c = data.results[0];
         const s = c.siege;
         
-        const now = new Date();
-        const ageB = Math.floor((now - new Date(c.date_creation)) / (1000 * 60 * 60 * 24 * 30));
-        const ageA = Math.floor((now - new Date(s.date_creation || c.date_creation)) / (1000 * 60 * 60 * 24 * 30));
-        
-        let mInfo = "Non public", mAge = null;
-        if (c.dirigeants && c.dirigeants[0]) { 
-            const d = c.dirigeants[0]; const n = `${d.prenoms||''} ${d.nom||''}`.trim();
-            if (d.annee_de_naissance) { mAge = new Date().getFullYear() - d.annee_de_naissance; mInfo = `${n} (${mAge} ans)`; } else mInfo = n;
-        }
-
-        let moves = 0, hist = [];
-        if (c.matching_etablissements) {
-            const e = c.matching_etablissements.sort((a,b)=>new Date(b.date_creation)-new Date(a.date_creation));
-            const y1 = new Date(); y1.setFullYear(now.getFullYear()-1);
-            if (ageA < 24) {
-                 hist = e.map(x => { if(new Date(x.date_creation)>y1) moves++; return `${x.etat_administratif==='A'?'✅':'❌'} : ${x.libelle_commune||'Inc.'} (${new Date(x.date_creation).toLocaleDateString('fr-FR')})`; });
-            }
+        let mInfo = "Non public";
+        if (c.dirigeants && c.dirigeants[0]) {
+             const d = c.dirigeants[0];
+             mInfo = `${d.prenoms||''} ${d.nom||''}`.trim();
         }
 
         return { 
@@ -482,62 +367,38 @@ const investigateCompany = async (rawSiren) => {
             name: c.nom_complet, 
             isClosed: c.etat_administratif === 'C',
             naf: c.activite_principale, 
-            nafLabel: c.activite_principale_libelle, 
-            address: `${s.numero_voie||''} ${s.type_voie||''} ${s.libelle_voie}, ${s.code_postal} ${s.libelle_commune}`, 
-            ageBoiteMois: ageB, 
-            ageAdresseMois: ageA, 
-            managerInfo: mInfo, 
-            managerAge: mAge, 
-            recentMoves: moves, 
-            history: hist, 
-            isGarage: c.activite_principale.startsWith('45')
+            address: `${s.numero_voie||''} ${s.libelle_voie}, ${s.code_postal} ${s.libelle_commune}`, 
+            isGarage: c.activite_principale.startsWith('45'),
+            managerInfo: mInfo,
+            recentMoves: 0 // Simplifié
         };
     } catch { return "ERROR_NETWORK"; }
 };
 
-// --- ROUTE SCAN ---
 app.post('/api/scan/auto', async (req, res) => {
     try {
         const { description = "", autoviza = "", siren = "", extractedPrice = null, extractedYear = null, accountYear = null } = req.body || {};
         
         const cleanDescription = extractMainDescription(description);
-        let score = 0;
-        let report = [];
-        let positives = [];
-        let mapsLink = null;
-        let companyHistory = [];
-        let isPro = false;
-        let accountAgeRisk = false;
-
-        // A. COHÉRENCE
-        const consistency = checkConsistency(cleanDescription, autoviza, extractedYear);
-        const validAutoviza = consistency.valid ? autoviza : ""; 
-        if (!consistency.valid) { report = [...report, ...consistency.flags]; score += 60; }
-        else if (autoviza && autoviza.length > 50) { positives.push({ label: "Rapport Analysé", desc: "Cohérent." }); }
-
-        // DONNÉES CLÉS
         const detectedModel = extractPreciseModel(cleanDescription);
         const extractedKm = extractMileage(cleanDescription);
         
-        // B. ANALYSES
-        const scriptAnalysis = analyzeScripts(cleanDescription);
-        score += scriptAnalysis.scoreMod;
-        report = [...report, ...scriptAnalysis.flags];
+        let score = 0;
+        let report = [];
+        let positives = [];
 
-        // 1. ESTIMATION PRIX (CSV PRIORITAIRE)
+        // 1. ANALYSE PRIX (CSV SMART MATCH)
         let estimationPrix = null;
         let sourceEstimation = null;
 
-        // Tentative via CSV
-        const prixCSV = estimerPrixLocal(detectedModel, extractedYear, extractedKm);
+        // On passe cleanDescription en 4ème argument pour le Smart Match
+        const prixCSV = estimerPrixLocal(detectedModel, extractedYear, extractedKm, cleanDescription);
         
         if (prixCSV) {
             estimationPrix = prixCSV;
             sourceEstimation = "Cote Officielle CSV";
-            console.log(`🎯 Trouvé dans CSV : ${detectedModel} (${extractedYear}, ${extractedKm}km) -> ${prixCSV}€`);
         } else {
-            console.log(`⚠️ Pas trouvé dans CSV pour : ${detectedModel} / ${extractedYear} / ${extractedKm}km`);
-            // Fallback IA si CSV échoue
+            // Fallback IA
             const estimationIA = await estimerPrixIA(detectedModel, extractedYear, extractedKm);
             if (estimationIA && estimationIA.prix_estime) {
                 estimationPrix = estimationIA.prix_estime;
@@ -549,7 +410,7 @@ app.post('/api/scan/auto', async (req, res) => {
             const diff = Math.abs(extractedPrice - estimationPrix);
             const percentDiff = diff / estimationPrix;
             
-            if (percentDiff > 0.35) { // Écart > 35%
+            if (percentDiff > 0.35) {
                 score += 40;
                 if (extractedPrice < estimationPrix) {
                     report.push({ type: 'danger', label: `Prix Suspect (${sourceEstimation})`, desc: `Cote: ${estimationPrix}€. Écart -${Math.round(percentDiff*100)}%.` });
@@ -557,69 +418,49 @@ app.post('/api/scan/auto', async (req, res) => {
                     report.push({ type: 'warning', label: `Prix Élevé (${sourceEstimation})`, desc: `Supérieur à la cote (${estimationPrix}€).` });
                 }
             } else {
-                positives.push({ label: "Prix Cohérent", desc: `Conforme à la cote (${estimationPrix}€).` });
+                positives.push({ label: "Prix Cohérent", desc: `Conforme à la cote (${estimationPrix}€) - Source: ${sourceEstimation}.` });
             }
-        } else if (!estimationPrix) {
-            report.push({ type: 'info', label: "Cote Indisponible", desc: "Modèle absent du fichier CSV." });
         }
 
-        if (consistency.valid || !autoviza) {
-            const relAnalysis = analyzeReliability(cleanDescription, extractedYear);
-            score += relAnalysis.scoreMod;
-            report = [...report, ...relAnalysis.flags];
+        // 2. SCRIPTS
+        const scripts = analyzeScripts(cleanDescription);
+        score += scripts.scoreMod;
+        report = [...report, ...scripts.flags];
 
-            const histAnalysis = analyzeHistory(cleanDescription, validAutoviza);
-            score += histAnalysis.scoreMod;
-            report = [...report, ...histAnalysis.flags];
-
-            const mechAnalysis = analyzeMechanical(cleanDescription);
-            score += mechAnalysis.scoreMod;
-            report = [...report, ...mechAnalysis.flags];
+        // 3. FIABILITÉ
+        for (const entry of CAR_KNOWLEDGE_DB) {
+            if (entry.badYears && !entry.badYears.includes(extractedYear)) continue;
+            const normText = normalizeString(cleanDescription);
+            if (entry.keywords.some(k => normText.includes(k))) {
+                 // Exception courroie faite
+                 if (entry.id === 'puretech' && normText.includes("courroie faite")) continue;
+                 score += 35;
+                 report.push({ type: 'warning', label: "Fiabilité Modèle", desc: entry.msg });
+            }
         }
 
-        const finAnalysis = analyzeFinancial(cleanDescription, extractedPrice);
-        score += finAnalysis.scoreMod;
-        report = [...report, ...finAnalysis.flags];
-
-        // C. SIRET
+        // 4. SIRET
+        let mapsLink = null;
+        let companyHistory = [];
+        let isPro = !!siren;
         if (siren) {
-            isPro = true;
             const info = await investigateCompany(siren);
-            
-            if (info && info !== "ERROR_NETWORK") {
-                 if (info.exists === false) { 
-                     score += 100; 
-                     report.push({ type: 'danger', label: "FAUX SIREN", desc: `Numéro ${siren} introuvable.` }); 
-                 }
-                 else {
-                     mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address)}`;
-                     companyHistory = info.history;
-                     
-                     if (info.isClosed) { score += 100; report.push({ type: 'danger', label: "ENTREPRISE FERMÉE", desc: "Statut: Cessée/Radiée." }); }
-                     else if (info.recentMoves >= 2) { score += 65; report.push({ type: 'danger', label: "INSTABILITÉ", desc: `${info.recentMoves} déménagements en 1 an.` }); }
-                     else if (info.ageAdresseMois < 6 && info.ageBoiteMois > 24) { score += 30; report.push({ type: 'warning', label: "Déménagement Récent", desc: "Adresse changée il y a < 6 mois." }); }
-                     else if (info.ageAdresseMois > 24) { score -= 15; positives.push({ label: "Adresse Stable", desc: `Depuis ${Math.floor(info.ageAdresseMois/12)} ans.` }); }
-                     
-                     if (!info.isGarage) { score += 45; report.push({ type: 'warning', label: "Activité Douteuse", desc: "Code NAF hors auto." }); }
-                     else { score -= 10; positives.push({ label: "Activité Vérifiée", desc: "Commerce Auto." }); }
-                     if (info.managerInfo) positives.push({ label: "Dirigeant", desc: info.managerInfo });
-                 }
+            if (info && info.exists) {
+                if (info.isClosed) { score += 100; report.push({ type: 'danger', label: "ENTREPRISE FERMÉE", desc: "Cessée/Radiée." }); }
+                else {
+                    positives.push({ label: "Pro Vérifié", desc: `${info.name} (${info.isGarage ? 'Garage' : 'Autre'})` });
+                    if (info.managerInfo) positives.push({ label: "Gérant", desc: info.managerInfo });
+                    mapsLink = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(info.address)}`;
+                }
+            } else if (info && !info.exists) {
+                score += 100; report.push({ type: 'danger', label: "FAUX SIRET", desc: "Numéro invalide." });
             }
-        } else { positives.push({ label: "Vendeur", desc: "Particulier" }); }
-
-        if (accountYear) {
-            const age = new Date().getFullYear() - accountYear;
-            if (age < 1) { score += 25; accountAgeRisk = true; report.push({ type: 'warning', label: "Compte Récent", desc: "Créé cette année." }); }
-            else if (age > 4) { score -= 10; positives.push({ label: "Compte Ancien", desc: `Membre ${age} ans.` }); }
         }
-        
-        const text = cleanDescription.toLowerCase();
-        if (text.includes("mandat cash") || text.includes("coupons pcs")) { score += 100; report.push({ type: 'danger', label: "Arnaque Paiement", desc: "Méthode illégale." }); }
 
         score = Math.min(Math.max(score, 0), 100);
         const verdict = score >= 80 ? "DANGER" : score > 40 ? "SUSPECT" : "FIABLE";
 
-        res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro, accountAgeRisk });
+        res.json({ score, verdict, details: report, positives, mapsLink, history: companyHistory, isPro });
 
     } catch (error) {
         console.error(error);
