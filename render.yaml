@@ -1,0 +1,53 @@
+services:
+  # -------------------------------------------------------
+  # SERVICE 1 : INTELLIGENCE ARTIFICIELLE (Python / Flask)
+  # -------------------------------------------------------
+  - type: web
+    name: expert-argus-ai
+    runtime: python
+    region: frankfurt
+    plan: free
+    # Commande de construction (Installation dépendances)
+    buildCommand: |
+      cd ai_service
+      pip install -r requirements.txt
+    # Commande de démarrage (Gunicorn server)
+    startCommand: |
+      cd ai_service
+      gunicorn api_ia:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: PYTHON_VERSION
+        value: 3.10.0
+
+  # -------------------------------------------------------
+  # SERVICE 2 : WEB APP (Node Backend + React Frontend)
+  # -------------------------------------------------------
+  - type: web
+    name: expert-argus-web
+    runtime: node
+    region: frankfurt
+    plan: free
+    # Commande de construction (Build React + Install Node)
+    buildCommand: |
+      # 1. Build du Frontend
+      cd client
+      npm install
+      npm run build
+      # 2. Préparation du Backend
+      cd ../backend
+      npm install
+    # Commande de démarrage
+    startCommand: |
+      cd backend
+      node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      # Lier le Backend à l'IA via le réseau interne Render
+      - key: PYTHON_API_URL
+        fromService:
+          type: web
+          name: expert-argus-ai
+          property: url
