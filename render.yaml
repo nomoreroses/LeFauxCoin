@@ -7,18 +7,16 @@ services:
     runtime: python
     region: frankfurt
     plan: free
-    # Optimisation : Installation propre des dépendances Python
+    # Installation propre
     buildCommand: |
       cd ai_service
       pip install --upgrade pip
       pip install -r requirements.txt
-    # Démarrage avec timeout augmenté pour éviter les kills prématurés
+    # Démarrage sur le port dynamique fourni par Render ($PORT)
     startCommand: |
       cd ai_service
       gunicorn api_ia:app --bind 0.0.0.0:$PORT --timeout 120
     envVars:
-      - key: PORT
-        value: 8000
       - key: PYTHON_VERSION
         value: 3.10.0
 
@@ -31,38 +29,30 @@ services:
     region: frankfurt
     plan: free
     # COMMANDE DE BUILD BLINDÉE
-    # 1. On force NPM_CONFIG_PRODUCTION=false pour installer 'vite' (devDependencies)
-    # 2. On clean les node_modules pour éviter les binaires incompatibles (Mac vs Linux)
-    # 3. On build le front, puis on installe le back
+    # 1. Client: On utilise --include=dev pour forcer l'installation de Vite
+    # 2. Backend: Installation standard
     buildCommand: |
-      export NPM_CONFIG_PRODUCTION=false
-      
-      echo "🔵 [1/4] Cleaning previous builds..."
-      rm -rf client/node_modules client/dist backend/node_modules
-      
-      echo "🔵 [2/4] Installing Client Dependencies..."
+      echo "🔵 [1/3] Installing Client Dependencies (incl. Dev)..."
       cd client
-      npm install
+      npm install --include=dev
       
-      echo "🔵 [3/4] Building React Frontend..."
+      echo "🔵 [2/3] Building React Frontend..."
       npm run build
       
-      echo "🟢 [4/4] Installing Backend Dependencies..."
+      echo "🟢 [3/3] Installing Backend Dependencies..."
       cd ../backend
       npm install
       
-    # Démarrage standard
+    # Démarrage
     startCommand: |
       cd backend
       node server.js
     envVars:
       - key: NODE_VERSION
         value: 20.11.0
-      # Lier le Backend à l'IA via le réseau interne Render
+      # Lier le Backend à l'IA : Render injectera ici "host:port" (ex: expert-argus-ai:10000)
       - key: PYTHON_API_URL
         fromService:
           type: web
           name: expert-argus-ai
           property: hostport
-      - key: NODE_ENV
-        value: production

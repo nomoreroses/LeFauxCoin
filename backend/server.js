@@ -1,5 +1,5 @@
 // Fichier: server.js
-// VERSION : COMPATIBILITÉ RENDER HOSTPORT + CROSS-CHECK + NAF
+// VERSION : ROBUSTESSE MAXIMALE (PATH RESOLUTION & DEBUG)
 
 const express = require('express');
 const cors = require('cors');
@@ -9,15 +9,14 @@ const fs = require('fs');
 const argus = require('./argusEngine'); 
 
 // --- CONFIGURATION ---
-// Fonction pour formater l'URL Python correctement
-// Render envoie parfois juste "host:port" via la propriété hostport
 const getPythonUrl = () => {
+    // Render envoie "host:port", on doit ajouter le protocole
     let url = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
-    // Si l'URL ne commence pas par http, on l'ajoute (cas Render hostport)
     if (!url.startsWith('http')) {
         url = `http://${url}`;
     }
-    return url;
+    // Nettoyage final : pas de slash à la fin
+    return url.replace(/\/$/, "");
 };
 
 const CONFIG = {
@@ -25,10 +24,16 @@ const CONFIG = {
     PYTHON_API_URL: getPythonUrl(),
     PYTHON_ENDPOINT: "/predict", 
     UPLOAD_DIR: path.join(__dirname, 'uploads'),
-    TIMEOUTS: { IA: 3000, GOUV: 3000 }
+    TIMEOUTS: { IA: 5000, GOUV: 3000 } // Timeout IA augmenté pour le "Cold Start" du Free Tier
 };
 
-// --- RÉFÉRENTIEL NAF AUTOMOBILE (Division 45) ---
+console.log("------------------------------------------------");
+console.log("⚙️  CONFIGURATION DU SERVEUR");
+console.log(`📡 Python API Target: ${CONFIG.PYTHON_API_URL}`);
+console.log(`📂 Upload Directory:  ${CONFIG.UPLOAD_DIR}`);
+console.log("------------------------------------------------");
+
+// --- RÉFÉRENTIELS ---
 const AUTO_NAF_CODES = {
     "45.11Z": "Commerce de voitures et de véhicules automobiles légers",
     "45.19Z": "Commerce d'autres véhicules automobiles",
@@ -39,7 +44,6 @@ const AUTO_NAF_CODES = {
     "45.40Z": "Commerce et réparation de motocycles"
 };
 
-// --- LISTE MARQUES PRINCIPALES (Pour Cross-Check) ---
 const CAR_BRANDS = [
     "MERCEDES-BENZ", "ALFA ROMEO", "LAND ROVER", "VOLKSWAGEN", "CHEVROLET", "MITSUBISHI", 
     "CITROEN", "PEUGEOT", "RENAULT", "PORSCHE", "HYUNDAI", "TOYOTA", "SUZUKI", "NISSAN", 
@@ -50,7 +54,6 @@ const CAR_BRANDS = [
 
 const app = express();
 app.use(cors());
-// Augmentation de la limite pour supporter les gros copier-coller
 app.use(express.json({ limit: '10mb' })); 
 app.use('/uploads', express.static(CONFIG.UPLOAD_DIR));
 
@@ -69,11 +72,11 @@ const upload = multer({ storage });
 
 let listings = [];
 
-// Chargement moteur Argus
+// Chargement Argus
 argus.loadData().catch(err => console.error("🔥 Echec chargement Argus.", err));
 
 
-// --- FONCTIONS UTILITAIRES (SCANNER) ---
+// --- FONCTIONS UTILITAIRES ---
 
 const cleanAutovizaText = (rawText) => {
     if (!rawText) return "";
@@ -131,9 +134,7 @@ const analyzeHistoryText = (rawText, description) => {
     const cleanText = cleanAutovizaText(rawText);
     const cleanDesc = (description || "").toLowerCase();
 
-    // 1. CROSS-CHECK VÉHICULE (Marque)
     let brandInReport = null;
-    
     for (const brand of CAR_BRANDS) {
         const regex = new RegExp(`\\b${brand}\\b`, 'i');
         if (regex.test(cleanText)) {
@@ -158,7 +159,6 @@ const analyzeHistoryText = (rawText, description) => {
         }
     }
 
-    // 2. Détection Usage PRO
     const checkUsageStatus = (keyword, label) => {
         const index = cleanText.indexOf(keyword);
         if (index !== -1) {
@@ -174,13 +174,11 @@ const analyzeHistoryText = (rawText, description) => {
     checkUsageStatus("taxi/vtc", "Taxi/VTC");
     checkUsageStatus("location courte-durée", "Location");
 
-    // 3. Importation
     if (cleanText.includes("importation") && !cleanText.includes("pas d'importation")) {
         score += 30;
         details.push({ label: "Véhicule Importé", desc: "Origine étrangère confirmée.", type: "warning" });
     }
 
-    // 4. Trou d'historique (Priorité)
     const gapRegex = /période sans informations.*?(\d+)\s*ans/i;
     const gapMatch = cleanText.match(gapRegex);
     
@@ -194,7 +192,6 @@ const analyzeHistoryText = (rawText, description) => {
         });
     }
 
-    // 5. Accident / VGE
     if ((cleanText.includes("procédure vge") || cleanText.includes("gravement endommagé")) && !cleanText.includes("néant")) {
         score += 100;
         details.unshift({ label: "ÉPAVE (VGE)", desc: "Véhicule déclaré épave.", type: "danger" });
@@ -207,7 +204,7 @@ const fetchAiPrediction = async (payload) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.TIMEOUTS.IA);
     try {
-        console.log(`🤖 Appel IA vers: ${CONFIG.PYTHON_API_URL}${CONFIG.PYTHON_ENDPOINT}`);
+        console.log(`🤖 Appel IA en cours vers: ${CONFIG.PYTHON_API_URL}${CONFIG.PYTHON_ENDPOINT}`);
         const response = await fetch(`${CONFIG.PYTHON_API_URL}${CONFIG.PYTHON_ENDPOINT}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -215,10 +212,13 @@ const fetchAiPrediction = async (payload) => {
             signal: controller.signal
         });
         clearTimeout(timeoutId);
-        if (!response.ok) return null;
+        if (!response.ok) {
+            console.error(`❌ Erreur Réponse IA: ${response.status} ${response.statusText}`);
+            return null;
+        }
         return await response.json();
     } catch (e) { 
-        console.error("Erreur Fetch IA:", e.message);
+        console.error(`❌ Echec Connexion IA: ${e.message}`);
         return null; 
     }
 };
@@ -240,10 +240,7 @@ const fetchCompanyData = async (siren) => {
 
 // --- ROUTES API ---
 
-app.get('/api/listings', (req, res) => {
-  res.json(listings);
-});
-
+app.get('/api/listings', (req, res) => { res.json(listings); });
 app.post('/api/listings', upload.single('image'), (req, res) => {
   const { title, price } = req.body;
   const image = req.file ? `/uploads/${req.file.filename}` : null;
@@ -277,7 +274,6 @@ app.post('/api/argus/estimate', (req, res) => {
     } catch (error) { res.status(500).json({ error: "Erreur calcul Argus" }); }
 });
 
-// ROUTE SCANNER INTELLIGENT
 app.post('/api/scan/auto', async (req, res) => {
     try {
         const { description, autoviza, extractedPrice, siren } = req.body;
@@ -298,22 +294,18 @@ app.post('/api/scan/auto', async (req, res) => {
         if (companyResult) {
             const ageMois = Math.floor((Date.now() - new Date(companyResult.date_creation).getTime()) / (1000 * 60 * 60 * 24 * 30));
             
-            // Fix NAF
             let nafCode = companyResult.activite_principale;
             let rawLabel = companyResult.libelle_activite_principale;
-
             if (!nafCode && companyResult.unite_legale) {
                 nafCode = companyResult.unite_legale.activite_principale;
                 rawLabel = companyResult.unite_legale.libelle_activite_principale;
             }
 
-            // Classification Métier
             let displayLabel = "Activité non précisée";
             let isAutoActivity = false;
 
             if (nafCode) {
                 const formattedNaf = nafCode.replace(/\./g, ''); 
-                
                 if (AUTO_NAF_CODES[nafCode] || Object.keys(AUTO_NAF_CODES).some(k => k.replace(/\./g,'') === formattedNaf)) {
                     const officialLabel = AUTO_NAF_CODES[nafCode] || rawLabel;
                     displayLabel = `✅ Activité Auto Validée : ${officialLabel} (${nafCode})`;
@@ -324,11 +316,7 @@ app.post('/api/scan/auto', async (req, res) => {
                 } else {
                     displayLabel = `⚠️ Activité Hors Auto : ${rawLabel || "Inconnue"} (${nafCode})`;
                     finalScore += 10;
-                    finalDetails.push({
-                        label: "Activité Atypique",
-                        desc: `SIREN valide mais activité (${nafCode}) non liée à l'automobile.`,
-                        type: "warning"
-                    });
+                    finalDetails.push({ label: "Activité Atypique", desc: `SIREN valide mais activité (${nafCode}) non liée à l'automobile.`, type: "warning" });
                 }
             } else {
                 displayLabel = "⚠️ Code Activité (NAF) Introuvable";
@@ -363,7 +351,6 @@ app.post('/api/scan/auto', async (req, res) => {
 
         finalScore = Math.max(0, Math.min(100, finalScore));
 
-        // UX Verdict
         let ux_verdict;
         if (finalScore <= 10) ux_verdict = { letter: 'A', color: 'emerald', label: 'EXCELLENT' };
         else if (finalScore <= 30) ux_verdict = { letter: 'B', color: 'lime', label: 'BON' };
@@ -393,11 +380,27 @@ app.post('/api/scan/auto', async (req, res) => {
 });
 
 // --- SERVING REACT FRONTEND (PRODUCTION) ---
-// Ces lignes servent le build React quand on n'est pas sur une route API
-app.use(express.static(path.join(__dirname, '../client/dist')));
+// Résolution du chemin absolu pour éviter les erreurs relatives
+const distPath = path.resolve(__dirname, '../client/dist');
 
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
-});
+// Vérification de l'existence du build avant de le servir
+if (fs.existsSync(distPath)) {
+    console.log(`✅ Frontend Build trouvé à : ${distPath}`);
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+} else {
+    console.error(`❌ CRITIQUE : Frontend Build INTROUVABLE à : ${distPath}`);
+    // Fallback pour ne pas laisser l'utilisateur devant un crash total
+    app.get('*', (req, res) => {
+        res.status(500).send(`
+            <h1>Erreur de Déploiement</h1>
+            <p>Le Frontend React n'a pas été trouvé sur le serveur.</p>
+            <p>Chemin cherché : ${distPath}</p>
+            <p>Vérifiez les logs de build Render.</p>
+        `);
+    });
+}
 
 app.listen(CONFIG.PORT, () => console.log(`🚀 Server running on ${CONFIG.PORT}`));
