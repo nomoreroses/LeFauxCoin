@@ -1,5 +1,5 @@
 // Fichier: server.js
-// VERSION : CONFIG ENV VAR + CROSS-CHECK MARQUE + FIX NAF + ROBUSTESSE TOTALE
+// VERSION : PRODUCTION READY (FULL MONOREPO COMPATIBLE)
 
 const express = require('express');
 const cors = require('cors');
@@ -8,11 +8,19 @@ const path = require('path');
 const fs = require('fs');
 const argus = require('./argusEngine'); 
 
-// --- CONFIGURATION ---
-// Modification : Lecture de la variable d'environnement pour l'URL Python
+// --- CONFIGURATION DYNAMIQUE ---
+// Fonction pour garantir que l'URL Python a bien un protocole (fix pour Render qui renvoie host:port)
+const getPythonUrl = () => {
+    let url = process.env.PYTHON_API_URL || "http://127.0.0.1:8000";
+    if (!url.startsWith('http')) {
+        url = `http://${url}`;
+    }
+    return url;
+};
+
 const CONFIG = {
     PORT: process.env.PORT || 5000,
-    PYTHON_API_URL: process.env.PYTHON_API_URL || "http://127.0.0.1:8000",
+    PYTHON_API_URL: getPythonUrl(),
     PYTHON_ENDPOINT: "/predict", 
     UPLOAD_DIR: path.join(__dirname, 'uploads'),
     TIMEOUTS: { IA: 3000, GOUV: 3000 }
@@ -30,7 +38,6 @@ const AUTO_NAF_CODES = {
 };
 
 // --- LISTE MARQUES PRINCIPALES (Pour Cross-Check) ---
-// Enrichie et triée par longueur pour éviter les faux positifs (ex: match "KIA" avant "SKODA")
 const CAR_BRANDS = [
     "MERCEDES-BENZ", "ALFA ROMEO", "LAND ROVER", "VOLKSWAGEN", "CHEVROLET", "MITSUBISHI", 
     "CITROEN", "PEUGEOT", "RENAULT", "PORSCHE", "HYUNDAI", "TOYOTA", "SUZUKI", "NISSAN", 
@@ -41,6 +48,7 @@ const CAR_BRANDS = [
 
 const app = express();
 app.use(cors());
+// Augmentation de la limite pour supporter les gros copier-coller de PDF
 app.use(express.json({ limit: '10mb' })); 
 app.use('/uploads', express.static(CONFIG.UPLOAD_DIR));
 
@@ -59,7 +67,7 @@ const upload = multer({ storage });
 
 let listings = [];
 
-// Chargement moteur Argus (Node)
+// Chargement du moteur Argus
 argus.loadData().catch(err => console.error("🔥 Echec chargement Argus.", err));
 
 
@@ -68,9 +76,11 @@ argus.loadData().catch(err => console.error("🔥 Echec chargement Argus.", err)
 const cleanAutovizaText = (rawText) => {
     if (!rawText) return "";
     let text = rawText;
+    // Nettoyage des headers/footers connus pour éviter le bruit
     text = text.replace(/Afin d’éviter toute modification.*?sur un lien sécurisé\./gs, "");
     const endMarker = text.indexOf("A propos des données du rapport");
     if (endMarker !== -1) text = text.substring(0, endMarker);
+    // Normalisation : tout en une ligne, minuscules
     return text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').toLowerCase().trim();
 };
 
@@ -113,10 +123,6 @@ const analyzeStaticRules = (data) => {
     return { score, details };
 };
 
-/**
- * Analyse Historique (Autoviza) avec Cross-Check Annonce
- * Utilise des regex strictes (\b) pour éviter les faux positifs (ex: MINI dans 'administration')
- */
 const analyzeHistoryText = (rawText, description) => {
     if (!rawText || rawText.length < 20) return { score: 0, details: [] };
     
@@ -131,24 +137,21 @@ const analyzeHistoryText = (rawText, description) => {
     for (const brand of CAR_BRANDS) {
         // Regex stricte : \bBRAND\b pour ne matcher que le mot entier
         const regex = new RegExp(`\\b${brand}\\b`, 'i');
-        
         if (regex.test(cleanText)) {
             brandInReport = brand;
-            break; // On s'arrête à la première marque trouvée dans le rapport
+            break; 
         }
     }
 
     if (brandInReport) {
-        // On vérifie si cette marque est présente dans l'annonce
         const regexDesc = new RegExp(`\\b${brandInReport}\\b`, 'i');
-        // Attention : On gère le cas spécial "CITROEN" vs "CITROËN"
+        // Normalisation pour gérer les accents (CITROËN vs CITROEN)
         const normalizedDesc = cleanDesc.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const normalizedBrand = brandInReport.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         const regexNorm = new RegExp(`\\b${normalizedBrand}\\b`, 'i');
 
         if (!regexDesc.test(cleanDesc) && !regexNorm.test(normalizedDesc)) {
             score += 100;
-            // Message UX Soigné
             details.unshift({
                 label: "Incohérence Véhicule",
                 desc: `Le rapport concerne une ${brandInReport}, mais cette marque semble absente de votre annonce. Le rapport ne correspond pas au véhicule vendu !`,
@@ -161,6 +164,7 @@ const analyzeHistoryText = (rawText, description) => {
     const checkUsageStatus = (keyword, label) => {
         const index = cleanText.indexOf(keyword);
         if (index !== -1) {
+            // Fenêtre de contexte de 120 chars pour chercher la négation
             const context = cleanText.substring(index, index + 120); 
             if (!context.includes("pas d'usage") && !context.includes("aucun usage") && !context.includes("néant")) {
                 score += 25;
@@ -206,6 +210,7 @@ const fetchAiPrediction = async (payload) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CONFIG.TIMEOUTS.IA);
     try {
+        console.log(`🤖 Appel IA vers: ${CONFIG.PYTHON_API_URL}${CONFIG.PYTHON_ENDPOINT}`);
         const response = await fetch(`${CONFIG.PYTHON_API_URL}${CONFIG.PYTHON_ENDPOINT}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -215,7 +220,10 @@ const fetchAiPrediction = async (payload) => {
         clearTimeout(timeoutId);
         if (!response.ok) return null;
         return await response.json();
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error("Erreur Fetch IA:", e.message);
+        return null; 
+    }
 };
 
 const fetchCompanyData = async (siren) => {
@@ -242,7 +250,13 @@ app.get('/api/listings', (req, res) => {
 app.post('/api/listings', upload.single('image'), (req, res) => {
   const { title, price } = req.body;
   const image = req.file ? `/uploads/${req.file.filename}` : null;
-  const newListing = { id: Date.now(), title, price, image, date: new Date() };
+  const newListing = { 
+      id: Date.now(), 
+      title, 
+      price, 
+      image,
+      date: new Date()
+  };
   listings.push(newListing);
   res.status(201).json(newListing);
 });
@@ -259,7 +273,9 @@ app.post('/api/argus/filters', (req, res) => {
             Puissances: argus.getUniqueValues(dataset, 'Puissance'),
             Finitions: argus.getUniqueValues(dataset, 'Finition')
         });
-    } catch (error) { res.status(500).json({ error: "Erreur serveur Argus" }); }
+    } catch (error) {
+        res.status(500).json({ error: "Erreur serveur Argus" });
+    }
 });
 
 app.post('/api/argus/estimate', (req, res) => {
@@ -269,7 +285,9 @@ app.post('/api/argus/estimate', (req, res) => {
         const result = argus.calculatePrice(criteria, parseInt(km));
         if (result) res.json(result);
         else res.status(404).json({ error: "Cote introuvable" });
-    } catch (error) { res.status(500).json({ error: "Erreur calcul Argus" }); }
+    } catch (error) {
+        res.status(500).json({ error: "Erreur calcul Argus" });
+    }
 });
 
 // ROUTE SCANNER INTELLIGENT
@@ -302,7 +320,7 @@ app.post('/api/scan/auto', async (req, res) => {
                 rawLabel = companyResult.unite_legale.libelle_activite_principale;
             }
 
-            // Classification Métier
+            // Intelligence Métier & Validation NAF
             let displayLabel = "Activité non précisée";
             let isAutoActivity = false;
 
@@ -385,6 +403,14 @@ app.post('/api/scan/auto', async (req, res) => {
         console.error("🔥 Error:", error);
         res.status(500).json({ error: "Erreur serveur" });
     }
+});
+
+// --- SERVING REACT FRONTEND (PRODUCTION) ---
+// Ces lignes servent le build React quand on n'est pas sur une route API
+app.use(express.static(path.join(__dirname, '../client/dist')));
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
 });
 
 app.listen(CONFIG.PORT, () => console.log(`🚀 Server running on ${CONFIG.PORT}`));
