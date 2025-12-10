@@ -46,8 +46,9 @@ services:
       - key: NODE_VERSION
         value: 20.11.0
       # Lier le Backend à l'IA via le réseau interne Render
+      # CORRECTION CRITIQUE : property 'url' n'existe pas, on utilise 'hostport'
       - key: PYTHON_API_URL
         fromService:
           type: web
           name: expert-argus-ai
-          property: url
+          property: hostport
