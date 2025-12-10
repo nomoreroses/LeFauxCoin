@@ -13,6 +13,12 @@ You can test the application live at the following link:
 
 > ⏳ **Note:** Please **wait about 1 minute** for the server to load (cold start).
 
+## 📸 Interface Preview
+
+![Live Demo Animation](screenshot/GifInterface1.gif)
+
+![Dashboard Interface](screenshot/Interface.jpg)
+
 ## About
 
 > *"The absence of official statistics masks an alarming reality: odometer fraud affects at least **2.4% of used cars** in France. In a market of millions, this represents tens of thousands of vehicles potentially overpriced by up to €4,000."*
