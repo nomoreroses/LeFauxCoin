@@ -7,14 +7,15 @@ services:
     runtime: python
     region: frankfurt
     plan: free
-    # Commande de construction (Installation dépendances)
+    # Optimisation : Installation propre des dépendances Python
     buildCommand: |
       cd ai_service
+      pip install --upgrade pip
       pip install -r requirements.txt
-    # Commande de démarrage (Gunicorn server)
+    # Démarrage avec timeout augmenté pour éviter les kills prématurés
     startCommand: |
       cd ai_service
-      gunicorn api_ia:app --bind 0.0.0.0:$PORT
+      gunicorn api_ia:app --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: PORT
         value: 8000
@@ -29,16 +30,28 @@ services:
     runtime: node
     region: frankfurt
     plan: free
-    # Commande de construction (Build React + Install Node)
+    # COMMANDE DE BUILD BLINDÉE
+    # 1. On force NPM_CONFIG_PRODUCTION=false pour installer 'vite' (devDependencies)
+    # 2. On clean les node_modules pour éviter les binaires incompatibles (Mac vs Linux)
+    # 3. On build le front, puis on installe le back
     buildCommand: |
-      # 1. Build du Frontend
+      export NPM_CONFIG_PRODUCTION=false
+      
+      echo "🔵 [1/4] Cleaning previous builds..."
+      rm -rf client/node_modules client/dist backend/node_modules
+      
+      echo "🔵 [2/4] Installing Client Dependencies..."
       cd client
       npm install
+      
+      echo "🔵 [3/4] Building React Frontend..."
       npm run build
-      # 2. Préparation du Backend
+      
+      echo "🟢 [4/4] Installing Backend Dependencies..."
       cd ../backend
       npm install
-    # Commande de démarrage
+      
+    # Démarrage standard
     startCommand: |
       cd backend
       node server.js
@@ -46,9 +59,10 @@ services:
       - key: NODE_VERSION
         value: 20.11.0
       # Lier le Backend à l'IA via le réseau interne Render
-      # CORRECTION CRITIQUE : property 'url' n'existe pas, on utilise 'hostport'
       - key: PYTHON_API_URL
         fromService:
           type: web
           name: expert-argus-ai
           property: hostport
+      - key: NODE_ENV
+        value: production
